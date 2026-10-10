@@ -6,122 +6,122 @@
 
 **Z**TE **U**nlock, **D**ecrypt & **Z**one-changer
 
-أداة صيانة أجهزة ZTE GPON/ONT الشخصية — فك تشفير، استخراج، وتغيير منطقة
+A maintenance tool for personal ZTE GPON/ONT devices — decrypt, extract & change region
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 
 <p>
-  <a href="#-التشغيل-بضغطة-زر-واحد">العربية</a> ·
-  <a href="#-one-click-launch">English</a>
+  <b>English</b> ·
+  <a href="README.ar.md">العربية</a>
 </p>
 
 </div>
 
 ---
 
-## ⚠️ تنبيه قانوني — اقرأ أولاً
+## ⚠️ Legal notice — read first
 
-> **هذه الأداة مخصصة للأجهزة الشخصية فقط** — الأجهزة التي تملكها أو أُذن لك صراحةً بإدارتها.
-> يُحظر استخدامها على أي جهاز لا تملكه أو للتهرب من فوترة مزود الخدمة أو انتحال هوية أجهزة الآخرين.
-> أي استخدام مخالف يكون على مسؤولية المستخدم الكاملة — راجع [DISCLAIMER.md](DISCLAIMER.md).
+> **This tool is intended for personal devices only** — devices you own or are explicitly authorized to manage.
+> Using it on anyone else's equipment, to evade ISP billing, or to impersonate another device is prohibited.
+> Any unlawful use is the user's sole responsibility — see [DISCLAIMER.md](DISCLAIMER.md).
 
 ---
 
-## ✨ الميزات
+## ✨ Features
 
-| الميزة | الوصف |
+| Feature | Description |
 |---|---|
-| 🔓 **فتح telnet التشخيصي** | بروتوكول وضع المصنع (اشتقاق مفتاح AES-192 من `server_rand`) لفتح وصول telnet على جهازك |
-| 🔐 **فك تشفير الإعدادات** | جميع أنواع تشفير ZTE (0–5): زوج ثابت، ZLIB، AES-128/256 باشتقاق من السيريال/الماك |
-| 📠 **استخراج الاعتمادات** | PPPoE / VoIP-SIP / WiFi / حسابات الويب من إعدادات جهازك أو ذاكرته — عند فقدانها |
-| 🪪 **هوية GPON** | قراءة / كتابة / استنساخ السيريال وPLOAM (TagParams عبر `setmac`) |
-| 🌍 **تغيير المنطقة** | `sdefconf` عبر بوابة أمان تُلزم بنسخة احتياطية كاملة موثقة قبل التنفيذ |
-| 🖥️ **واجهة رسومية** | ويب UI محلي بثلاث لغات (عربية / فرنسية / إنجليزية) + سطر أوامر كامل |
+| 🔓 **Diagnostic telnet unlock** | Factory-mode protocol (AES-192 key derivation from `server_rand`) to open telnet access on your device |
+| 🔐 **Config decryption** | All ZTE encryption types (0–5): fixed pair, ZLIB, AES-128/256 with serial/MAC-derived keys |
+| 📠 **Credential recovery** | PPPoE / VoIP-SIP / WiFi / web accounts from your device's config or memory — for when you lose them |
+| 🪪 **GPON identity** | Read / write / clone the serial and PLOAM password (TagParams via `setmac`) |
+| 🌍 **Region change** | `sdefconf` behind a safety gate that enforces a documented full backup before execution |
+| 🖥️ **GUI + CLI** | Local web UI in three languages (Arabic / French / English) plus a full command-line interface |
 
-## 🚀 التشغيل بضغطة زر واحدة
+## 🚀 One-click launch
 
-### الطريقة الأسهل (لينكس)
+### Easiest way (Linux)
 
 ```bash
-# مرة واحدة فقط: منح صلاحية التنفيذ وتثبيت الأيقونة في قائمة التطبيقات
+# One time only: grant execute permissions and install the menu icon
 chmod +x run-zudz.sh install-desktop-entry.sh stop-zudz.sh
 ./install-desktop-entry.sh
 ```
 
-بعد ذلك **ابحث عن ZUDZ في قائمة تطبيقاتك واضغطها** — سيفتح المتصفح على الواجهة مباشرة.
+After that, **search for ZUDZ in your applications menu and click it** — your browser opens on the UI directly.
 
-أو شغّل مباشرة بالنقر المزدوج على `run-zudz.sh` (أو من مدير الملفات ← "تشغيل كبرنامج").
+You can also double-click `run-zudz.sh` (or use "Run as a program" in your file manager).
 
-- عند **أول تشغيل** يبني المشغّل الأداة تلقائياً (Rust + الواجهة) — قد يستغرق بضع دقائق.
-- بعدها يفتح `http://127.0.0.1:8790` خلال ثوانٍ من الضغطة.
-- الإيقاف: `stop-zudz.sh` أو من قائمة التطبيقات.
+- On **first run** the launcher builds everything automatically (Rust core + web UI) — may take a few minutes.
+- Afterwards it opens `http://127.0.0.1:8790` within seconds of the click.
+- To stop: `stop-zudz.sh`.
 
-### من سطر الأوامر (اختياري)
+### From the command line (optional)
 
 ```bash
-./run-zudz.sh                      # التشغيل الكامل + فتح المتصفح
+./run-zudz.sh                      # full launch + open browser
 
-# أو يدوياً:
+# or manually:
 cd zudz
-cargo build --release                       # بناء النواة
-cd app && bun install && bun run build      # بناء الواجهة (مرة واحدة)
-cd .. && ./target/release/zudz-server 8790 app/build   # التشغيل
-# الواجهة: http://127.0.0.1:8790
+cargo build --release                       # build the core
+cd app && bun install && bun run build      # build the UI (one time)
+cd .. && ./target/release/zudz-server 8790 app/build   # run
+# UI: http://127.0.0.1:8790
 
-./target/release/zudz --help                # سطر الأوامر الكامل
-./target/release/zudz about                 # معلومات الأداة والترخيص
+./target/release/zudz --help                # full CLI reference
+./target/release/zudz about                 # about / license notice
 ```
 
-### المتطلبات
+### Requirements
 
-- [Rust](https://rustup.rs) (للنواة) و [Bun](https://bun.sh) (للواجهة) — مطلوبان عند أول تشغيل فقط
-- لينكس (يُختبر على CachyOS/Arch) — الواجهة تعمل على أي متصفح حديث
+- [Rust](https://rustup.rs) (core) and [Bun](https://bun.sh) (UI) — needed on first run only
+- Linux (tested on CachyOS/Arch); the UI runs in any modern browser
 
-## 📦 بنية المشروع
+## 📦 Project layout
 
 ```
-zudz/                    # مساحة عمل Rust (11 حزمة)
-├── crates/zudz-crypto   # فك تشفير إعدادات ZTE (أنواع 0–5) + encrypasswd
-├── crates/zudz-factory  # بروتوكول وضع المصنع لفتح telnet
-├── crates/zudz-telnet   # عميل telnet متوافق مع ZTE
-├── crates/zudz-gpon     # تحليل TagParams وهويات GPON
-├── crates/zudz-db       # محلل قاعدة بيانات XML الخاصة بـ ZTE
-├── crates/zudz-web      # سحب واجهة LUA للجهاز
-├── crates/zudz-extract  # الاستخراج الموحد (4 مسارات)
-├── crates/zudz-region   # تغيير المنطقة عبر بوابة الأمان
-├── crates/zudz-meta     # هوية المشروع والترخيص (مصدر مركزي)
-├── crates/zudz-cli      # واجهة سطر الأوامر
-├── crates/zudz-server   # خادم محلي 127.0.0.1 + API + خدمة الواجهة
-├── app/                 # واجهة SvelteKit (ar/fr/en)
-└── tests/fixtures/      # متجهات اصطناعية + عينات عامة للاختبارات
-run-zudz.sh              # ← التشغيل بضغطة زر
-install-desktop-entry.sh # ← تثبيت أيقونة قائمة التطبيقات
+zudz/                    # Rust workspace (11 crates)
+├── crates/zudz-crypto   # ZTE config decryption (types 0–5) + encrypasswd
+├── crates/zudz-factory  # factory-mode telnet unlock protocol
+├── crates/zudz-telnet   # ZTE-compatible telnet client
+├── crates/zudz-gpon     # TagParams parsing & GPON identities
+├── crates/zudz-db       # ZTE XML database parser
+├── crates/zudz-web      # device LUA web scraping
+├── crates/zudz-extract  # unified extraction (4 paths)
+├── crates/zudz-region   # region change behind the safety gate
+├── crates/zudz-meta     # project identity & license (single source)
+├── crates/zudz-cli      # command-line interface
+├── crates/zudz-server   # local 127.0.0.1 server + API + UI hosting
+├── app/                 # SvelteKit UI (ar/fr/en)
+└── tests/fixtures/      # synthetic vectors + public test samples
+run-zudz.sh              # ← one-click launcher
+install-desktop-entry.sh # ← install applications-menu icon
 ```
 
-## 🔒 الخصوصية
+## 🔒 Privacy
 
-- **الخادم محلي بالكامل** — يرتبط على `127.0.0.1` فقط، لا اتصال بأي خدمة خارجية.
-- التقارير التي تولّدها الأداة على جهازك (اعتمادات، هويات) تُكتب بصلاحية `0600` — **تعامل معها كسرية ولا تشاركها**.
-- هذا المستودع لا يحتوي أي بيانات أجهزة حقيقية؛ متجهات الاختبار اصطناعية بالكامل.
+- **Fully local server** — binds to `127.0.0.1` only; no connection to any external service.
+- Reports the tool generates on your machine (credentials, identities) are written with `0600` permissions — **treat them as confidential and never share them**.
+- This repository contains no real device data; all test vectors are fully synthetic.
 
-## 🧪 الاختبارات
+## 🧪 Tests
 
 ```bash
 cd zudz && cargo test --workspace
 ```
 
-الاختبارات التفاضلية تطابق مخرجات فك التشفير بايت-بالبايت ضد عينات عامة مرجعية.
+Differential tests match decryption output byte-for-byte against public reference samples.
 
-## 🙏 الاعتمادات
+## 🙏 Credits
 
-- [zte-config-utility](https://github.com/mkst/zte-config-utility) (mkst، MIT) — مرجع محرك فك التشفير وعينات الاختبار العامة
-- مجتمع [hack-gpon](https://hack-gpon.org) — توثيق أكواد المناطق وبروتوكولات ZTE
+- [zte-config-utility](https://github.com/mkst/zte-config-utility) (mkst, MIT) — decryption engine reference and public test samples
+- The [hack-gpon](https://hack-gpon.org) community — region codes and ZTE protocol documentation
 
-## 📄 الترخيص
+## 📄 License
 
-**GNU AGPL-3.0-or-later** — راجع [LICENSE](LICENSE). من يعدّل الأداة ويقدّمها كخدمة شبكية يجب أن ينشر مصدر تعديله بنفس الرخصة.
+**GNU AGPL-3.0-or-later** — see [LICENSE](LICENSE). If you modify the tool and offer it as a network service, you must publish your modified source under the same license.
 
-## 👤 المطوّر
+## 👤 Developer
 
 - GitHub: [dreamzone-cc](https://github.com/dreamzone-cc)
 - Discord: `yuuyu_gg`
@@ -129,5 +129,5 @@ cd zudz && cargo test --workspace
 ---
 
 <div align="center">
-<sub>استخدمها بوعي — على جهازك فقط.</sub>
+<sub>Use responsibly — on your own devices only.</sub>
 </div>
