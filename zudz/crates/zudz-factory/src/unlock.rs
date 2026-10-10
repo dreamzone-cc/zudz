@@ -15,12 +15,31 @@ pub enum FactoryError {
     AuthResult(String),
     #[error("لم تُستخرج بيانات telnet من الرد: {0}")]
     NoTelnetCreds(String),
-    #[error("تعذّر تحديد ماك بطاقة الشبكة الموصلة بالجهاز")]
+    #[error("لم يُعثر على ماك بطاقة شبكة")]
     LocalMacNotFound,
+    #[error(
+        "بوابة MAC: كرت الشبكة الموصل للجهاز هو «{iface}» وماكه {current} \
+         — الجهاز لا يفتح telnet إلا إذا كان ماك الكرت {required} \
+         (المصنع يقفل المنفذ 23 على هذا العنوان التشخيصي). أصلِح بكتابة:\n  \
+         sudo ip link set dev {iface} down\n  \
+         sudo ip link set dev {iface} address {required}\n  \
+         sudo ip link set dev {iface} up\n\
+         ثم أعد المحاولة (المؤقت: يعود الأصلي بعد إعادة التشغيل)."
+    )]
+    MacGate { iface: String, current: String, required: &'static str },
     #[error(transparent)]
     Http(#[from] HttpError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// العنوان التشخيصي الإلزامي — من أداة zteonu الأصلية: الجهاز لا يفتح telnet
+/// إلا إذا كان ماك كرت الشبكة الفعلي (وحمولة المصنع) بهذه القيمة بالضبط.
+pub const DIAGNOSTIC_MAC: [u8; 6] = [0x00, 0x07, 0x29, 0x55, 0x35, 0x57];
+pub const DIAGNOSTIC_MAC_STR: &str = "00:07:29:55:35:57";
+
+pub fn mac_str(mac: &[u8; 6]) -> String {
+    mac.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":")
 }
 
 #[derive(Debug, Clone)]
@@ -93,10 +112,76 @@ pub fn get_local_mac() -> Result<[u8; 6], FactoryError> {
     best.ok_or(FactoryError::LocalMacNotFound)
 }
 
+// ─── بوابة MAC التشخيصي ────────────────────────────────────────────────
+
+/// يستخرج اسم واجهة الخروج نحو المضيف من مخرجات `ip route get <host>`
+/// مثال: "192.168.1.1 dev enp3s0 src 192.168.1.10" → Some("enp3s0")
+pub fn parse_route_dev(route_out: &str) -> Option<String> {
+    let mut it = route_out.split_whitespace();
+    while let Some(tok) = it.next() {
+        if tok == "dev" {
+            return it.next().map(|s| s.trim().to_string());
+        }
+    }
+    None
+}
+
+/// يستخرج MAC الواجهة من مخرجات `ip -o link show dev <iface>`
+pub fn parse_link_mac(link_out: &str) -> Option<[u8; 6]> {
+    let pos = link_out.find("link/ether ")?;
+    let mac_str = link_out[pos + 11..].split_whitespace().next()?;
+    let clean: String = mac_str.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if clean.len() != 12 {
+        return None;
+    }
+    let mut mac = [0u8; 6];
+    for i in 0..6 {
+        mac[i] = u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(mac)
+}
+
+/// ماك كرت الشبكة الموصل فعلياً نحو المضيف (عبر جدول التوجيه)
+pub fn nic_mac_towards(host: &str) -> Result<Option<(String, [u8; 6])>, FactoryError> {
+    let out = Command::new("ip")
+        .args(["route", "get", host])
+        .output()
+        .map_err(FactoryError::Io)?;
+    let route = String::from_utf8_lossy(&out.stdout);
+    let Some(dev) = parse_route_dev(&route) else {
+        return Ok(None);
+    };
+    let out = Command::new("ip")
+        .args(["-o", "link", "show", "dev", &dev])
+        .output()
+        .map_err(FactoryError::Io)?;
+    let link = String::from_utf8_lossy(&out.stdout);
+    Ok(parse_link_mac(&link).map(|mac| (dev, mac)))
+}
+
+/// فحص إلزامي قبل الفتح: ماك كرت الشبكة نحو الجهاز يجب أن يساوي DIAGNOSTIC_MAC.
+/// يطابق سلوك أداة zteonu الأصلية التي ترفض العمل بدونه.
+pub fn check_diagnostic_mac(host: &str) -> Result<(), FactoryError> {
+    match nic_mac_towards(host)? {
+        Some((iface, mac)) if mac != DIAGNOSTIC_MAC => Err(FactoryError::MacGate {
+            iface,
+            current: mac_str(&mac),
+            required: DIAGNOSTIC_MAC_STR,
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// التنفيذ الكامل: يفتح telnet ويعيد البيانات المؤقتة.
-/// user/password = بيانات واجهة الويب (admin/admin افتراضياً على هذه العائلة).
+/// user/password = بيانات واجهة الويب (افتراضياً على هذه العائلة يمكن حساب المصنع).
+///
+/// يطابق سلوك أداة zteonu الأصلية:
+/// 1. يرفض العمل إذا كان ماك كرت الشبكة نحو الجهاز ≠ DIAGNOSTIC_MAC
+///    (الجهاز يقفل telnet على هذا العنوان — بدونه يكتمل البروتوكول ولا يفتح المنفذ).
+/// 2. يضمّن DIAGNOSTIC_MAC في الحمولة — وليس ماك الكرت الحقيقي.
 pub fn unlock_telnet(host: &str, user: &str, password: &str) -> Result<UnlockResult, FactoryError> {
-    unlock_telnet_with_mac(host, user, password, &get_local_mac()?)
+    check_diagnostic_mac(host)?;
+    unlock_telnet_with_mac(host, user, password, &DIAGNOSTIC_MAC)
 }
 
 pub fn unlock_telnet_with_mac(

@@ -8,7 +8,10 @@
 pub mod http;
 pub mod unlock;
 
-pub use unlock::{get_local_mac, unlock_telnet, FactoryError, UnlockResult};
+pub use unlock::{
+    check_diagnostic_mac, get_local_mac, mac_str, nic_mac_towards, unlock_telnet,
+    unlock_telnet_with_mac, FactoryError, UnlockResult, DIAGNOSTIC_MAC, DIAGNOSTIC_MAC_STR,
+};
 
 pub const FACTORY_USER: &str = "factorymode";
 pub const FACTORY_PASS: &str = "nE%jA@5b";
@@ -130,6 +133,33 @@ mod tests {
         assert_eq!(w[0], 0);
         assert_eq!(w[1], 1);
         assert_eq!(w[3], modpow(5767, 5767, 30049) as u32);
+    }
+
+    #[test]
+    fn diagnostic_mac_parsers_and_gate() {
+        use crate::unlock::{mac_str, parse_link_mac, parse_route_dev, DIAGNOSTIC_MAC, DIAGNOSTIC_MAC_STR};
+
+        // الثابت يطابق أداة zteonu الأصلية (نفس القيمة في ثنائية zteonu ووثائقها)
+        assert_eq!(mac_str(&DIAGNOSTIC_MAC), DIAGNOSTIC_MAC_STR);
+        assert_eq!(DIAGNOSTIC_MAC_STR, "00:07:29:55:35:57");
+
+        // محلل مسار التوجيه
+        assert_eq!(
+            parse_route_dev("192.168.1.1 dev enp3s0 src 192.168.1.10 uid 1000"),
+            Some("enp3s0".into())
+        );
+        assert_eq!(parse_route_dev("192.168.1.1 via 192.168.1.254 dev eth0 src 192.168.1.5"), Some("eth0".into()));
+        assert_eq!(parse_route_dev("garbage without dev"), None);
+
+        // محلل MAC من ip link
+        assert_eq!(
+            parse_link_mac("2: enp3s0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 link/ether 14:ca:56:dd:73:9f permaddr aa:bb:cc:dd:ee:ff"),
+            Some([0x14, 0xca, 0x56, 0xdd, 0x73, 0x9f])
+        );
+        // يلتقط أول link/ether (permaddr يُتجاهل)
+        assert_eq!(parse_link_mac("link/ether 00:07:29:55:35:57"), Some(DIAGNOSTIC_MAC));
+        assert_eq!(parse_link_mac("no mac here"), None);
+        assert_eq!(parse_link_mac("link/ether 00:07"), None);
     }
 
     #[test]
