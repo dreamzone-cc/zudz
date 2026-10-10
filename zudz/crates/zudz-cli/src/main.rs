@@ -55,13 +55,14 @@ enum Cmd {
         #[arg(long, default_value = "admin")] password: String,
         #[arg(long, default_value = "region_backup")] out: String,
     },
-    /// تنفيذ تغيير المنطقة (يتطلب ack من prepare — يمسح إعدادات المزود!)
+    /// تنفيذ تغيير المنطقة (يمسح إعدادات المزود! — تُسحب نسخة احتياطية تلقائياً قبل التنفيذ عند ترك ack فارغاً)
     RegionChange {
         #[arg(long, default_value = "192.168.1.1")] host: String,
         #[arg(long, default_value = "admin")] user: String,
         #[arg(long, default_value = "admin")] password: String,
         #[arg(long)] code: u32,
-        #[arg(long)] ack: String,
+        /// اختياري: توكن من region-prepare — عند تركه فارغاً يُسحب احتياطياً كاملاً تلقائياً أولاً
+        #[arg(long, default_value = "")] ack: String,
         #[arg(long, default_value = "region_backup")] out: String,
         #[arg(long)] force_unknown: bool,
         #[arg(long, default_value = "true")] perm_telnet: bool,
@@ -72,22 +73,24 @@ enum Cmd {
         #[arg(long, default_value = "admin")] user: String,
         #[arg(long, default_value = "admin")] password: String,
     },
-    /// استنساخ هوية GPON من report.json إلى الجهاز الهدف (الجهاز الجديد)
+    /// استنساخ هوية GPON من report.json إلى الجهاز الهدف (تُسحب نسخة تلقائية لهوية الجهاز الهدف أولاً)
     GponClone {
         #[arg(long, default_value = "192.168.1.1")] host: String,
         #[arg(long, default_value = "admin")] user: String,
         #[arg(long, default_value = "admin")] password: String,
         /// مسار report.json من extract-all/prepare
         #[arg(long)] report: String,
+        #[arg(long, default_value = "zudz_gpon_backup")] out: String,
     },
-    /// كتابة هوية GPON بقيم صريحة
+    /// كتابة هوية GPON بقيم صريحة (تُسحب نسخة تلقائية لهوية الجهاز الحالية أولاً)
     GponWrite {
         #[arg(long, default_value = "192.168.1.1")] host: String,
         #[arg(long, default_value = "admin")] user: String,
         #[arg(long, default_value = "admin")] password: String,
         #[arg(long)] vid: String,
         #[arg(long)] sn8: String,
-        #[arg(long)] ploam: String,
+        #[arg(long, default_value = "")] ploam: String,
+        #[arg(long, default_value = "zudz_gpon_backup")] out: String,
     },
     /// معلومات المشروع: المطوّر والترخيص والغرض
     About,
@@ -147,9 +150,9 @@ fn main() {
         Cmd::RegionChange { host, user, password, code, ack, out, force_unknown, perm_telnet } =>
             cmd_region_change(&host, &user, &password, code, &ack, &out, force_unknown, perm_telnet),
         Cmd::GponRead { host, user, password } => cmd_gpon_read(&host, &user, &password),
-        Cmd::GponClone { host, user, password, report } => cmd_gpon_clone(&host, &user, &password, &report),
-        Cmd::GponWrite { host, user, password, vid, sn8, ploam } =>
-            cmd_gpon_write(&host, &user, &password, &vid, &sn8, &ploam),
+        Cmd::GponClone { host, user, password, report, out } => cmd_gpon_clone(&host, &user, &password, &report, &out),
+        Cmd::GponWrite { host, user, password, vid, sn8, ploam, out } =>
+            cmd_gpon_write(&host, &user, &password, &vid, &sn8, &ploam, &out),
         Cmd::About => {
             println!("{}", meta::notice());
             0
@@ -223,11 +226,17 @@ fn cmd_region_change(host: &str, user: &str, password: &str, code: u32, ack: &st
         return 1;
     }
     println!("⚠️  هذا سيمسح إعدادات المزود الحالية ويعيد التشغيل!");
+    if ack.trim().is_empty() {
+        println!("🛡️  لا توكن — سيُسحب احتياطياً كاملاً تلقائياً قبل التنفيذ (الإلغاء تلقائي إن فشل السحب)");
+    }
     let opts = zudz_extract::ExtractOptions {
         host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
     };
     match zudz_region::change_region(&opts, code, ack, std::path::Path::new(out), force_unknown, perm_telnet) {
         Ok(res) => {
+            if let Some(b) = &res.backup {
+                println!("🛡️  نسخة احتياطية تلقائية قبل التنفيذ: {}", b.report_path);
+            }
             println!("✅ نُفّذ sdefconf {} — {}", res.code, res.note);
             if res.permanent_telnet_applied {
                 println!("   telnet دائم: admin/admin");
@@ -256,13 +265,17 @@ fn cmd_gpon_read(host: &str, user: &str, password: &str) -> i32 {
     }
 }
 
-fn cmd_gpon_clone(host: &str, user: &str, password: &str, report: &str) -> i32 {
+fn cmd_gpon_clone(host: &str, user: &str, password: &str, report: &str, out: &str) -> i32 {
     println!("🧬 استنساخ هوية GPON من {report} → {host}");
+    println!("🛡️  ستُسحب نسخة تلقائية لهوية الجهاز الهدف الحالية إلى {out} قبل الكتابة");
     let opts = zudz_extract::ExtractOptions {
         host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
     };
-    match zudz_region::gpon_clone_from_report(&opts, std::path::Path::new(report)) {
+    match zudz_region::gpon_clone_from_report(&opts, std::path::Path::new(report), std::path::Path::new(out)) {
         Ok(res) => {
+            if let Some(b) = &res.backup {
+                println!("🛡️  نسخة احتياطية تلقائية: {}", b.report_path);
+            }
             for c in &res.commands_run { println!("  $ {c}"); }
             println!("─── مخرجات الجهاز ───");
             println!("{}", res.raw_output);
@@ -273,12 +286,16 @@ fn cmd_gpon_clone(host: &str, user: &str, password: &str, report: &str) -> i32 {
     }
 }
 
-fn cmd_gpon_write(host: &str, user: &str, password: &str, vid: &str, sn8: &str, ploam: &str) -> i32 {
+fn cmd_gpon_write(host: &str, user: &str, password: &str, vid: &str, sn8: &str, ploam: &str, out: &str) -> i32 {
+    println!("🛡️  ستُسحب نسخة تلقائية لهوية الجهاز الحالية إلى {out} قبل الكتابة");
     let opts = zudz_extract::ExtractOptions {
         host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
     };
-    match zudz_region::gpon_write(&opts, vid, sn8, ploam) {
+    match zudz_region::gpon_write(&opts, vid, sn8, ploam, std::path::Path::new(out)) {
         Ok(res) => {
+            if let Some(b) = &res.backup {
+                println!("🛡️  نسخة احتياطية تلقائية: {}", b.report_path);
+            }
             println!("{}", res.raw_output);
             println!("✅ اكتملت الكتابة");
             0

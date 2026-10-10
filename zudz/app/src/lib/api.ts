@@ -37,7 +37,7 @@ export interface Meta {
 /// قيم احتياطية ثابتة (عندما لا يعمل الخادم) — مطابقة لـ zudz-meta
 export const FALLBACK_META: Meta = {
   name: 'ZUDZ',
-  version: '0.1.0',
+  version: '0.2.0',
   tagline: 'ZTE Unlock, Decrypt & Zone-changer',
   author: 'dreamzone-cc',
   homepage: 'https://github.com/dreamzone-cc',
@@ -77,6 +77,13 @@ export interface DevicePing {
   detail: string;
 }
 
+/// نسخة احتياطية سُحبت تلقائياً قبل عملية خطيرة (تغيير منطقة / كتابة GPON)
+export interface BackupInfo {
+  dir: string;
+  report_path: string;
+  reason: string;
+}
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: body === undefined ? 'GET' : 'POST',
@@ -96,13 +103,13 @@ export const api = {
   regionPrepare: (p: { host: string; user: string; password: string }) =>
     call<{ ok: boolean; token: string; summary: Report }>('/api/region/prepare', p),
   regionChange: (p: { host: string; user: string; password: string; code: number; ack: string; perm_telnet: boolean; force_unknown?: boolean }) =>
-    call<{ ok: boolean; result: { code: number; region_name: string; raw_output: string; note: string } }>('/api/region/change', p),
+    call<{ ok: boolean; auto_backup: boolean; result: { code: number; region_name: string; raw_output: string; note: string; backup: BackupInfo | null } }>('/api/region/change', p),
   gponRead: (p: { host: string; user: string; password: string }) =>
     call<{ ok: boolean; tags: Record<string, string> }>('/api/gpon/read', p),
   gponClone: (p: { host: string; user: string; password: string }) =>
-    call<{ ok: boolean; commands: string[]; output: string }>('/api/gpon/clone', p),
+    call<{ ok: boolean; commands: string[]; output: string; backup: BackupInfo | null }>('/api/gpon/clone', p),
   gponWrite: (p: { host: string; user: string; password: string; vid: string; sn8: string; ploam: string }) =>
-    call<{ ok: boolean; commands: string[]; output: string }>('/api/gpon/write', p),
+    call<{ ok: boolean; commands: string[]; output: string; backup: BackupInfo | null }>('/api/gpon/write', p),
   inspect: (p: { path: string }) =>
     call<{ ok: boolean; signature: string | null; payload_type: number | null; has_zte_header: boolean | null }>('/api/inspect', p),
   inspectContent: (p: { content_b64: string }) =>

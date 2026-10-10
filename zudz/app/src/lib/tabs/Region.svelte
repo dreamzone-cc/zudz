@@ -39,8 +39,9 @@
     changeBusy = true; err = ''; result = null;
     try {
       const code = useCustom ? Number(custom) || 0 : selected;
+      // ack فارغ = النسخة الاحتياطية تُسحب تلقائياً داخل الخادم قبل التنفيذ
       const r = await api.regionChange({
-        host, user, password, code, ack: token, perm_telnet: permTelnet,
+        host, user, password, code, ack: token.trim(), perm_telnet: permTelnet,
         force_unknown: useCustom,
       });
       result = r.result;
@@ -52,7 +53,7 @@
     }
   }
 
-  $: canChange = token && confirmed && (useCustom ? !!custom : true);
+  $: canChange = confirmed && (useCustom ? !!custom : true);
 </script>
 
 <div class="card">
@@ -130,11 +131,18 @@
     </label>
   </div>
 
+  {#if !token}
+    <div class="msg ok">🛡️ {$tr('region.autoBackup')}</div>
+  {/if}
+
   <button class="danger" on:click={change} disabled={!canChange || changeBusy}>
     {changeBusy ? $tr('common.running') : $tr('region.execute')}
   </button>
   {#if result}
     <div class="msg ok">✅ {$tr('region.done')} — {westernDigits(String(result.code))} {result.region_name}</div>
+    {#if result.backup}
+      <div class="msg ok">🛡️ {$tr('common.autoBackupAt')}: <span class="mono">{westernDigits(result.backup.report_path)}</span></div>
+    {/if}
     <pre class="out">{westernDigits(result.raw_output)}</pre>
   {/if}
 </div>

@@ -39,8 +39,8 @@ A maintenance tool for personal ZTE GPON/ONT devices — decrypt, extract & chan
 | <img src="docs/icons/unlock.svg" width="18" alt=""> **Diagnostic telnet unlock** | Factory-mode protocol (AES-192 key derivation from `server_rand`) to open telnet access on your device |
 | <img src="docs/icons/key.svg" width="18" alt=""> **Config decryption** | All ZTE encryption types (0–5): fixed pair, ZLIB, AES-128/256 with serial/MAC-derived keys |
 | <img src="docs/icons/card.svg" width="18" alt=""> **Credential recovery** | PPPoE / VoIP-SIP / WiFi / web accounts from your device's config or memory — for when you lose them |
-| <img src="docs/icons/badge.svg" width="18" alt=""> **GPON identity** | Read / write / clone the serial and PLOAM password (TagParams via `setmac`) |
-| <img src="docs/icons/globe.svg" width="18" alt=""> **Region change** | `sdefconf` behind a safety gate that enforces a documented full backup before execution |
+| <img src="docs/icons/badge.svg" width="18" alt=""> **GPON identity** | Read / write / clone the serial and PLOAM password (TagParams via `setmac`) — the current identity is backed up automatically before any write |
+| <img src="docs/icons/globe.svg" width="18" alt=""> **Region change** | `sdefconf` behind a safety gate: a full backup is pulled **automatically** before execution, and the operation aborts if the backup fails |
 | <img src="docs/icons/monitor.svg" width="18" alt=""> **GUI + CLI** | Local web UI in three languages (Arabic / French / English) plus a full command-line interface |
 
 ## <img src="docs/icons/zap.svg" width="20" align="top" alt=""> One-click launch

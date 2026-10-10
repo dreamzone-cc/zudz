@@ -273,29 +273,36 @@ fn handle_api(mut req: tiny_http::Request, method: &Method, url: &str, st: &mut 
         "/api/region/change" => {
             let o = opts_from(&v);
             let code = v.get("code").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-            let ack = v.get("ack").and_then(|x| x.as_str()).unwrap_or("");
+            let ack = v.get("ack").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
             let perm = v.get("perm_telnet").and_then(|x| x.as_bool()).unwrap_or(true);
             let force = v.get("force_unknown").and_then(|x| x.as_bool()).unwrap_or(false);
-            // تحقق التوكن من ذاكرة الخادم
-            let valid = match &st.ack_token {
-                Some((tok, created)) => {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    tok == ack && now.saturating_sub(*created) <= 3600
+
+            // وضعان:
+            //  - ack مُقدَّم: تدفق يدوي — يلزم توكن صالح من prepare (بوابة الذاكرة)
+            //  - ack فارغ: نسخة احتياطية كاملة تلقائية داخل change_region
+            //    (وإن فشل السحب تُلغى العملية قبل لمس الجهاز)
+            if !ack.is_empty() {
+                let valid = match &st.ack_token {
+                    Some((tok, created)) => {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        *tok == ack && now.saturating_sub(*created) <= 3600
+                    }
+                    None => false,
+                };
+                if !valid {
+                    err_json(req, "بوابة الأمان: توكن غير صالح/منتهي — نفّذ السحب الاحتياطي أولاً أو اترك التوكن فارغاً للنسخ التلقائي");
+                    return;
                 }
-                None => false,
-            };
-            if !valid {
-                err_json(req, "بوابة الأمان: توكن غير صالح/منتهي — نفّذ السحب الاحتياطي أولاً");
-                return;
             }
-            match zudz_region::change_region(&o, code, ack, Path::new("zudz_region_backup"), force, perm) {
+            match zudz_region::change_region(&o, code, &ack, Path::new("zudz_region_backup"), force, perm) {
                 Ok(res) => {
                     st.ack_token = None; // لمرة واحدة
+                    let auto = res.backup.is_some();
                     let j = serde_json::to_value(&res).unwrap_or_default();
-                    ok_json(req, serde_json::json!({ "ok": true, "result": j }));
+                    ok_json(req, serde_json::json!({ "ok": true, "auto_backup": auto, "result": j }));
                 }
                 Err(e) => err_json(req, e),
             }
@@ -315,12 +322,14 @@ fn handle_api(mut req: tiny_http::Request, method: &Method, url: &str, st: &mut 
         }
         "/api/gpon/clone" => {
             let o = opts_from(&v);
-            // من آخر تقرير محفوظ، أو ملف النسخة الاحتياطية
+            // من آخر تقرير محفوظ، أو ملف النسخة الاحتياطية.
+            // نسخة تلقائية لهوية الجهاز الهدف الحالية تُسحب قبل الكتابة.
             let report_path = Path::new("zudz_region_backup/report.json");
-            match zudz_region::gpon_clone_from_report(&o, report_path) {
+            match zudz_region::gpon_clone_from_report(&o, report_path, Path::new("zudz_gpon_backup")) {
                 Ok(res) => {
+                    let backup = serde_json::to_value(&res.backup).unwrap_or_default();
                     let j = serde_json::to_value(&res).unwrap_or_default();
-                    ok_json(req, serde_json::json!({ "ok": true, "commands": res.commands_run, "output": res.raw_output }));
+                    ok_json(req, serde_json::json!({ "ok": true, "backup": backup, "commands": res.commands_run, "output": res.raw_output, "result": j }));
                 }
                 Err(e) => err_json(req, e),
             }
@@ -330,9 +339,10 @@ fn handle_api(mut req: tiny_http::Request, method: &Method, url: &str, st: &mut 
             let vid = v.get("vid").and_then(|x| x.as_str()).unwrap_or("");
             let sn8 = v.get("sn8").and_then(|x| x.as_str()).unwrap_or("");
             let ploam = v.get("ploam").and_then(|x| x.as_str()).unwrap_or("");
-            match zudz_region::gpon_write(&o, vid, sn8, ploam) {
+            match zudz_region::gpon_write(&o, vid, sn8, ploam, Path::new("zudz_gpon_backup")) {
                 Ok(res) => {
-                    ok_json(req, serde_json::json!({ "ok": true, "commands": res.commands_run, "output": res.raw_output }));
+                    let backup = serde_json::to_value(&res.backup).unwrap_or_default();
+                    ok_json(req, serde_json::json!({ "ok": true, "backup": backup, "commands": res.commands_run, "output": res.raw_output }));
                 }
                 Err(e) => err_json(req, e),
             }

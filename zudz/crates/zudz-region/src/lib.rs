@@ -1,7 +1,9 @@
 //! ZUDZ region — تغيير المنطقة بأمان + استنساخ هوية GPON
 //!
-//! بوابة الأمان: sdefconf يمسح إعدادات المزود، لذلك يُرفض التنفيذ قبل
-//! سحب كامل موثق (prepare_region_change يولّد ack_token لمرة واحدة).
+//! بوابة الأمان: sdefconf يمسح إعدادات المزود، لذلك تُنفَّذ أي عملية خطيرة
+//! (تغيير منطقة أو كتابة/استنساخ هوية GPON) فقط بعد نسخة احتياطية كاملة
+//! موثّقة. النسخة تُسحب تلقائياً عند بدء العملية — وإن فشل السحب تُلغى
+//! العملية (لا نسخة = لا تنفيذ).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -17,6 +19,10 @@ pub enum RegionError {
     StaleAck,
     #[error("فشل السحب الاستباقي: {0}")]
     Extract(String),
+    #[error(
+        "فشل السحب الاحتياطي التلقائي — أُلغيت العملية حفاظاً على بيانات الجهاز. أعد المحاولة بعد حل المشكلة: {0}"
+    )]
+    AutoBackup(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -162,6 +168,33 @@ fn validate_ack(out_dir: &Path, token: &str, host: &str) -> Result<AckFile, Regi
     Ok(ack)
 }
 
+// ─── النسخ الاحتياطي التلقائي الإلزامي ─────────────────────────────────
+
+/// معلومات نسخة احتياطية أُنشئت تلقائياً قبل عملية خطيرة
+#[derive(Debug, Serialize, Clone)]
+pub struct BackupInfo {
+    pub dir: String,
+    pub report_path: String,
+    pub reason: String,
+}
+
+/// السحب الاحتياطي التلقائي قبل أي عملية قد تُفقد بيانات الجهاز.
+/// أي فشل في السحب يمنع تنفيذ العملية — لا نسخة = لا تنفيذ.
+fn auto_backup(
+    opts: &ExtractOptions,
+    out_dir: &Path,
+    reason: &str,
+) -> Result<(BackupInfo, String), RegionError> {
+    let p = prepare_region_change(opts, out_dir)
+        .map_err(|e| RegionError::AutoBackup(e.to_string()))?;
+    let info = BackupInfo {
+        dir: out_dir.display().to_string(),
+        report_path: out_dir.join("report.json").display().to_string(),
+        reason: reason.to_string(),
+    };
+    Ok((info, p.token))
+}
+
 #[derive(Debug, Serialize)]
 pub struct RegionChangeResult {
     pub code: u32,
@@ -169,9 +202,16 @@ pub struct RegionChangeResult {
     pub permanent_telnet_applied: bool,
     pub raw_output: String,
     pub note: String,
+    /// النسخة الاحتياطية التي سُحبت تلقائياً قبل التنفيذ (عند غياب ack يدوي)
+    pub backup: Option<BackupInfo>,
 }
 
-/// تنفيذ تغيير المنطقة — مرفوض دون ack صالح من prepare.
+/// تنفيذ تغيير المنطقة.
+///
+/// - مع `ack_token` صالح: تنفيذ مباشر (تدفق prepare اليدوي التقليدي).
+/// - مع `ack_token` فارغ: **سحب احتياطي كامل تلقائي أولاً** — وإن فشل السحب
+///   تُلغى العملية قبل لمس الجهاز. الجهاز لا يُمس أبداً دون نسخة ناجحة.
+///
 /// يثبّت telnet الدائم أولاً (اختياري) ثم ينفّذ sdefconf (يعيد الجهاز التشغيل).
 pub fn change_region(
     opts: &ExtractOptions,
@@ -185,7 +225,18 @@ pub fn change_region(
     if region.is_none() && !allow_unknown {
         return Err(RegionError::UnknownCode(code));
     }
-    let ack = validate_ack(out_dir, ack_token, &opts.host)?;
+
+    // بوابة الأمان: توكن صالح من prepare، أو نسخ تلقائي كامل عند غيابه
+    let mut backup = None;
+    let token = if ack_token.trim().is_empty() {
+        let (info, tok) = auto_backup(opts, out_dir, "تغيير المنطقة (sdefconf)")?;
+        backup = Some(info);
+        tok
+    } else {
+        ack_token.trim().to_string()
+    };
+    let ack = validate_ack(out_dir, &token, &opts.host)?;
+    let _ = ack.report_path; // التقرير محفوظ في out_dir
 
     let r = zudz_factory::unlock_telnet(&opts.host, &opts.web_user, &opts.web_password)
         .map_err(|e| RegionError::Extract(format!("unlock: {e}")))?;
@@ -215,6 +266,7 @@ pub fn change_region(
         permanent_telnet_applied: perm,
         raw_output: out,
         note: "الجهاز سيعيد التشغيل الآن ويُحمّل إعدادات المنطقة الجديدة.".into(),
+        backup,
     })
 }
 
@@ -224,6 +276,8 @@ pub fn change_region(
 pub struct GponWriteResult {
     pub commands_run: Vec<String>,
     pub raw_output: String,
+    /// نسخة هوية الجهاز الحالية التي سُحبت تلقائياً قبل الكتابة
+    pub backup: Option<BackupInfo>,
 }
 
 /// يقرأ هوية GPON عبر telnet (setmac 2 + show2)
@@ -241,18 +295,26 @@ pub fn gpon_read(opts: &ExtractOptions) -> Result<zudz_gpon_lite::TagMap, Region
     Ok(zudz_gpon_lite::parse(&txt))
 }
 
-/// يكتب هوية GPON على الجهاز الهدف (استنساخ من report.json أو قيم صريحة)
+/// يكتب هوية GPON على الجهاز الهدف (استنساخ من report.json أو قيم صريحة).
+///
+/// **نسخة تلقائية إلزامية**: تُسحب هوية الجهاز الحالية كاملة (report.json)
+/// إلى `out_dir` قبل أي كتابة — وإن فشل السحب تُمنع الكتابة، لأن هوية
+/// GPON الأصلية غير القابلة للاسترجاع هي أول ضحايا الكتابة الخاطئة.
 pub fn gpon_write(
     opts: &ExtractOptions,
     vid: &str,
     sn8: &str,
     ploam: &str,
+    out_dir: &Path,
 ) -> Result<GponWriteResult, RegionError> {
     if vid.len() != 4 || sn8.len() != 8 || !sn8.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(RegionError::Extract(
             "vid يجب أن يكون 4 محارف و sn8 ثماني خانات hex".into(),
         ));
     }
+    // السحب الاحتياطي التلقائي لهوية الجهاز الحالية — قبل فتح جلسة الكتابة
+    let (backup, _tok) = auto_backup(opts, out_dir, "كتابة هوية GPON (setmac)")?;
+
     let r = zudz_factory::unlock_telnet(&opts.host, &opts.web_user, &opts.web_password)
         .map_err(|e| RegionError::Extract(format!("unlock: {e}")))?;
     let mut tn = zudz_telnet::ZteTelnet::connect(&opts.host, 23, 15)
@@ -277,19 +339,21 @@ pub fn gpon_write(
         raw.push_str(&tn.run_capture(c, 3));
         raw.push('\n');
     }
-    Ok(GponWriteResult { commands_run: cmds, raw_output: raw })
+    Ok(GponWriteResult { commands_run: cmds, raw_output: raw, backup: Some(backup) })
 }
 
-/// استنساخ من تقرير extract-all: يقرأ report.json ويكتب هويته على الجهاز الهدف
+/// استنساخ من تقرير extract-all: يقرأ report.json ويكتب هويته على الجهاز الهدف.
+/// تُسحب نسخة تلقائية لهوية الجهاز الهدف الحالية إلى `out_dir` قبل الكتابة.
 pub fn gpon_clone_from_report(
     opts: &ExtractOptions,
     report_path: &Path,
+    out_dir: &Path,
 ) -> Result<GponWriteResult, RegionError> {
     let data = std::fs::read_to_string(report_path)?;
     let rep: ZudzReport = serde_json::from_str(&data)
         .map_err(|e| RegionError::Extract(format!("report.json غير صالح: {e}")))?;
     let vid: String = rep.gpon.vid.chars().take(4).collect();
-    gpon_write(opts, &vid, &rep.gpon.sn8, &rep.gpon.ploam_password)
+    gpon_write(opts, &vid, &rep.gpon.sn8, &rep.gpon.ploam_password, out_dir)
 }
 
 // وحدة صغيرة فوق zudz-gpon لتسهيل الأنواع
@@ -337,5 +401,33 @@ mod tests {
         assert!(matches!(validate_ack(dir.path(), "abc", "h"), Err(RegionError::StaleAck)));
         // غير موجود
         assert!(matches!(validate_ack(Path::new("/nonexistent"), "abc", "h"), Err(RegionError::NoAck)));
+    }
+
+    #[test]
+    fn unknown_code_rejected_before_any_backup_or_network() {
+        // التحقق من الكود يسبق أي شيء: لا اتصال شبكة ولا سحب احتياطي يبدأ
+        let dir = tempfile::tempdir().unwrap();
+        let opts = ExtractOptions { host: "203.0.113.1".into(), ..Default::default() };
+        let err = change_region(&opts, 99999, "", dir.path(), false, false).unwrap_err();
+        assert!(matches!(err, RegionError::UnknownCode(99999)));
+    }
+
+    #[test]
+    fn auto_backup_failure_blocks_operation() {
+        // ack فارغ + لا جهاز: يجب أن تفشل العملية بخطأ النسخ التلقائي
+        // (AutoBackup) — لا خطأ اتصال لاحق، ولا أي كتابة على أي جهاز.
+        // 127.0.0.1 يرفض الاتصال فوراً فلا يبطئ الاختبار.
+        let dir = tempfile::tempdir().unwrap();
+        let opts = ExtractOptions {
+            host: "127.0.0.1".into(),
+            web_user: "u".into(),
+            web_password: "p".into(),
+            with_web: false,
+        };
+        let err = gpon_write(&opts, "ZTEG", "AABBCCDD", "", dir.path()).unwrap_err();
+        assert!(
+            matches!(err, RegionError::AutoBackup(_)),
+            "المتوقع AutoBackup، وجدنا: {err:?}"
+        );
     }
 }
