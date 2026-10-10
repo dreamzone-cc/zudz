@@ -8,13 +8,13 @@
 
 A maintenance tool for personal ZTE GPON/ONT devices — decrypt, extract & change region
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![License: AGPL v3](docs/badges/license.svg)](LICENSE)
 
 </div>
 
 ---
 
-## 🖼️ Screenshots
+## <img src="docs/icons/screenshots.svg" width="20" align="top" alt=""> Screenshots
 
 | Extract data | Change zone |
 |:---:|:---:|
@@ -24,7 +24,7 @@ A maintenance tool for personal ZTE GPON/ONT devices — decrypt, extract & chan
 |:---:|:---:|
 | ![GPON identity](docs/screenshots/gpon.png) | ![Decrypt](docs/screenshots/decrypt.png) |
 
-## ⚠️ Legal notice — read first
+## <img src="docs/icons/alert.svg" width="20" align="top" alt=""> Legal notice — read first
 
 > **This tool is intended for personal devices only** — devices you own or are explicitly authorized to manage.
 > Using it on anyone else's equipment, to evade ISP billing, or to impersonate another device is prohibited.
@@ -32,18 +32,18 @@ A maintenance tool for personal ZTE GPON/ONT devices — decrypt, extract & chan
 
 ---
 
-## ✨ Features
+## <img src="docs/icons/features.svg" width="20" align="top" alt=""> Features
 
 | Feature | Description |
 |---|---|
-| 🔓 **Diagnostic telnet unlock** | Factory-mode protocol (AES-192 key derivation from `server_rand`) to open telnet access on your device |
-| 🔐 **Config decryption** | All ZTE encryption types (0–5): fixed pair, ZLIB, AES-128/256 with serial/MAC-derived keys |
-| 📠 **Credential recovery** | PPPoE / VoIP-SIP / WiFi / web accounts from your device's config or memory — for when you lose them |
-| 🪪 **GPON identity** | Read / write / clone the serial and PLOAM password (TagParams via `setmac`) |
-| 🌍 **Region change** | `sdefconf` behind a safety gate that enforces a documented full backup before execution |
-| 🖥️ **GUI + CLI** | Local web UI in three languages (Arabic / French / English) plus a full command-line interface |
+| <img src="docs/icons/unlock.svg" width="18" alt=""> **Diagnostic telnet unlock** | Factory-mode protocol (AES-192 key derivation from `server_rand`) to open telnet access on your device |
+| <img src="docs/icons/key.svg" width="18" alt=""> **Config decryption** | All ZTE encryption types (0–5): fixed pair, ZLIB, AES-128/256 with serial/MAC-derived keys |
+| <img src="docs/icons/card.svg" width="18" alt=""> **Credential recovery** | PPPoE / VoIP-SIP / WiFi / web accounts from your device's config or memory — for when you lose them |
+| <img src="docs/icons/badge.svg" width="18" alt=""> **GPON identity** | Read / write / clone the serial and PLOAM password (TagParams via `setmac`) |
+| <img src="docs/icons/globe.svg" width="18" alt=""> **Region change** | `sdefconf` behind a safety gate that enforces a documented full backup before execution |
+| <img src="docs/icons/monitor.svg" width="18" alt=""> **GUI + CLI** | Local web UI in three languages (Arabic / French / English) plus a full command-line interface |
 
-## 🚀 One-click launch
+## <img src="docs/icons/zap.svg" width="20" align="top" alt=""> One-click launch
 
 ### Easiest way (Linux)
 
@@ -82,7 +82,7 @@ cd .. && ./target/release/zudz-server 8790 app/build   # run
 - [Rust](https://rustup.rs) (core) and [Bun](https://bun.sh) (UI) — needed on first run only
 - Linux (tested on CachyOS/Arch); the UI runs in any modern browser
 
-## 📦 Project layout
+## <img src="docs/icons/package.svg" width="20" align="top" alt=""> Project layout
 
 ```
 zudz/                    # Rust workspace (11 crates)
@@ -103,13 +103,13 @@ run-zudz.sh              # ← one-click launcher
 install-desktop-entry.sh # ← install applications-menu icon
 ```
 
-## 🔒 Privacy
+## <img src="docs/icons/lock.svg" width="20" align="top" alt=""> Privacy
 
 - **Fully local server** — binds to `127.0.0.1` only; no connection to any external service.
 - Reports the tool generates on your machine (credentials, identities) are written with `0600` permissions — **treat them as confidential and never share them**.
 - This repository contains no real device data; all test vectors are fully synthetic.
 
-## 🧪 Tests
+## <img src="docs/icons/flask.svg" width="20" align="top" alt=""> Tests
 
 ```bash
 cd zudz && cargo test --workspace
@@ -117,16 +117,16 @@ cd zudz && cargo test --workspace
 
 Differential tests match decryption output byte-for-byte against public reference samples.
 
-## 🙏 Credits
+## <img src="docs/icons/heart.svg" width="20" align="top" alt=""> Credits
 
 - [zte-config-utility](https://github.com/mkst/zte-config-utility) (mkst, MIT) — decryption engine reference and public test samples
 - The [hack-gpon](https://hack-gpon.org) community — region codes and ZTE protocol documentation
 
-## 📄 License
+## <img src="docs/icons/file-text.svg" width="20" align="top" alt=""> License
 
 **GNU AGPL-3.0-or-later** — see [LICENSE](LICENSE). If you modify the tool and offer it as a network service, you must publish your modified source under the same license.
 
-## 👤 Developer
+## <img src="docs/icons/user.svg" width="20" align="top" alt=""> Developer
 
 - GitHub: [dreamzone-cc](https://github.com/dreamzone-cc)
 - Discord: `yuuyu_gg`
