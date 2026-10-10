@@ -10,14 +10,19 @@ A maintenance tool for personal ZTE GPON/ONT devices — decrypt, extract & chan
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 
-<p>
-  <b>English</b> ·
-  <a href="README.ar.md">العربية</a>
-</p>
-
 </div>
 
 ---
+
+## 🖼️ Screenshots
+
+| Extract data | Change zone |
+|:---:|:---:|
+| ![Extract data](docs/screenshots/extract.png) | ![Change zone](docs/screenshots/region.png) |
+
+| GPON identity | Decrypt |
+|:---:|:---:|
+| ![GPON identity](docs/screenshots/gpon.png) | ![Decrypt](docs/screenshots/decrypt.png) |
 
 ## ⚠️ Legal notice — read first
 
