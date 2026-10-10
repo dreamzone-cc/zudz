@@ -1,0 +1,38 @@
+[
+ {
+  "src": "zudz/tests/fixtures/sources/ZXHN_H298N.bin",
+  "expected": "configs/h298n_type2.xml",
+  "size": 279475,
+  "sha256": "d2b3c054915d718f49a199657e4f50955ca7915ba0463db708f4a685d1e2521e",
+  "method": "مفتاح ثابت مرتبط بالتوقيع → key='Wj' (payload type 2)",
+  "signature": "ZXHN H298N",
+  "payload_type": 2
+ },
+ {
+  "src": "zudz/tests/fixtures/sources/ZXHN_H108N_V2.5.bin",
+  "expected": "configs/h108n_type2.xml",
+  "size": 67332,
+  "sha256": "192af7d784a24b413969bbab2688cde52772c492b5930c7325581055d6729109",
+  "method": "مفتاح ثابت مرتبط بالتوقيع → key='GrWM2Hz&LTvz&f^5' (payload type 2)",
+  "signature": "ZXHN H108N V2.5",
+  "payload_type": 2
+ },
+ {
+  "src": "zudz/tests/fixtures/sources/F600W.bin",
+  "expected": "configs/f600w_type0.xml",
+  "size": 152177,
+  "sha256": "03904fb48dad9850ddba18b955f1c366d5584650c8414c0d2283d5f7a60b84a9",
+  "method": "بدون تشفير (ZLIB فقط)",
+  "signature": "F600W",
+  "payload_type": 0
+ },
+ {
+  "src": "zudz/tests/fixtures/sources/ZXHN_H298Q_C7_db_type3.bin",
+  "expected": "configs/h298q_type3.xml",
+  "size": 76410,
+  "sha256": "fa66ff4c4e27573b33f34511cf6d1ac6e5776167c8aa4053c66bf5b299cba8cd",
+  "method": "طراز (H298Q) → key='H298Q / IV=H298Q' (payload type 3)",
+  "signature": null,
+  "payload_type": 3
+ }
+]

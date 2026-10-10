@@ -1,0 +1,13 @@
+[package]
+name = "zudz-telnet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZUDZ telnet client (IAC + commands + hex-stream transfer)"
+
+[dependencies]
+hex = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+zudz-factory = { path = "../zudz-factory" }

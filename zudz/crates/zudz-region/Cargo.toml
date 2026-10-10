@@ -1,0 +1,18 @@
+[package]
+name = "zudz-region"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZUDZ region: safe zone-changer (sdefconf) + GPON clone"
+
+[dependencies]
+zudz-extract = { path = "../zudz-extract" }
+zudz-factory = { path = "../zudz-factory" }
+zudz-telnet = { path = "../zudz-telnet" }
+zudz-gpon = { path = "../zudz-gpon" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

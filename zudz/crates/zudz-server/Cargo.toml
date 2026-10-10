@@ -1,0 +1,20 @@
+[package]
+name = "zudz-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZUDZ server: unified HTTP API + serves the SvelteKit UI"
+
+[[bin]]
+name = "zudz-server"
+path = "src/main.rs"
+
+[dependencies]
+zudz-extract = { path = "../zudz-extract" }
+zudz-region = { path = "../zudz-region" }
+zudz-crypto = { path = "../zudz-crypto" }
+tiny_http = "0.12"
+zudz-meta = { path = "../zudz-meta" }
+zudz-web = { path = "../zudz-web" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

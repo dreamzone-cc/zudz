@@ -1,0 +1,352 @@
+//! ZUDZ CLI — ZTE Unlock, Decrypt & Zone-changer
+
+use clap::{Parser, Subcommand};
+use zudz_crypto::{decrypt_auto, inspect, DecryptParams};
+use zudz_meta::{self as meta};
+
+#[derive(Parser)]
+#[command(name = "zudz", version, about = "ZUDZ — ZTE Unlock, Decrypt & Zone-changer",
+    long_about = meta::notice())]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// فحص بنية ملف إعدادات ZTE
+    Inspect { file: String },
+    /// فك تشفير ملف إعدادات (أنواع 0-5)
+    Decrypt {
+        infile: String,
+        outfile: String,
+        #[arg(long)] signature: Option<String>,
+        #[arg(long)] serial: Option<String>,
+        #[arg(long)] mac: Option<String>,
+        #[arg(long)] password: Option<String>,
+        #[arg(long)] key: Option<String>,
+        #[arg(long)] iv: Option<String>,
+        #[arg(long)] model: Option<String>,
+    },
+    /// فك كلمة مرور pppd (encrypasswd)
+    EncryPasswd { hex: String },
+    /// فتح telnet على الجهاز (وضع المصنع)
+    Unlock {
+        #[arg(long, default_value = "192.168.1.1")] host: String,
+        #[arg(long, default_value = "admin")] user: String,
+        #[arg(long, default_value = "admin")] password: String,
+    },
+    /// تحليل مخرجات setmac show2
+    TagParams { file: String },
+    /// الاستخراج الموحد من الجهاز الحي (مصنع + telnet + pppd + ذاكرة cspd + ويب)
+    ExtractAll {
+        #[arg(long, default_value = "192.168.1.1")] host: String,
+        #[arg(long, default_value = "admin")] user: String,
+        #[arg(long, default_value = "admin")] password: String,
+        #[arg(long)] out: Option<String>,
+        #[arg(long, default_value = "true")] with_web: bool,
+    },
+    /// جدول مناطق ZTE (sdefconf)
+    RegionList,
+    /// بوابة الأمان: سحب كامل إلزامي قبل تغيير المنطقة — يولّد ack token
+    RegionPrepare {
+        #[arg(long, default_value = "192.168.1.1")] host: String,
+        #[arg(long, default_value = "admin")] user: String,
+        #[arg(long, default_value = "admin")] password: String,
+        #[arg(long, default_value = "region_backup")] out: String,
+    },
+    /// تنفيذ تغيير المنطقة (يتطلب ack من prepare — يمسح إعدادات المزود!)
+    RegionChange {
+        #[arg(long, default_value = "192.168.1.1")] host: String,
+        #[arg(long, default_value = "admin")] user: String,
+        #[arg(long, default_value = "admin")] password: String,
+        #[arg(long)] code: u32,
+        #[arg(long)] ack: String,
+        #[arg(long, default_value = "region_backup")] out: String,
+        #[arg(long)] force_unknown: bool,
+        #[arg(long, default_value = "true")] perm_telnet: bool,
+    },
+    /// قراءة هوية GPON من الجهاز
+    GponRead {
+        #[arg(long, default_value = "192.168.1.1")] host: String,
+        #[arg(long, default_value = "admin")] user: String,
+        #[arg(long, default_value = "admin")] password: String,
+    },
+    /// استنساخ هوية GPON من report.json إلى الجهاز الهدف (الجهاز الجديد)
+    GponClone {
+        #[arg(long, default_value = "192.168.1.1")] host: String,
+        #[arg(long, default_value = "admin")] user: String,
+        #[arg(long, default_value = "admin")] password: String,
+        /// مسار report.json من extract-all/prepare
+        #[arg(long)] report: String,
+    },
+    /// كتابة هوية GPON بقيم صريحة
+    GponWrite {
+        #[arg(long, default_value = "192.168.1.1")] host: String,
+        #[arg(long, default_value = "admin")] user: String,
+        #[arg(long, default_value = "admin")] password: String,
+        #[arg(long)] vid: String,
+        #[arg(long)] sn8: String,
+        #[arg(long)] ploam: String,
+    },
+    /// معلومات المشروع: المطوّر والترخيص والغرض
+    About,
+}
+
+fn main() {
+    let cli = Cli::parse();
+    let rc = match cli.cmd {
+        Cmd::Inspect { file } => cmd_inspect(&file),
+        Cmd::Decrypt { infile, outfile, signature, serial, mac, password, key, iv, model } => {
+            cmd_decrypt(&infile, &outfile, signature, serial, mac, password, key, iv, model)
+        }
+        Cmd::EncryPasswd { hex } => match zudz_crypto::decrypt_encrypasswd(&hex) {
+            Ok(p) => {
+                println!("{p}");
+                0
+            }
+            Err(e) => {
+                eprintln!("❌ {e}");
+                1
+            }
+        },
+        Cmd::Unlock { host, user, password } => match zudz_factory::unlock_telnet(&host, &user, &password) {
+            Ok(r) => {
+                println!("✅ factory mode — telnet: {} / {}", r.telnet_user, r.telnet_pass);
+                println!("   aes_key={} server_mac={}", r.aes_key, r.server_mac);
+                0
+            }
+            Err(e) => {
+                eprintln!("❌ {e}");
+                1
+            }
+        },
+        Cmd::TagParams { file } => match std::fs::read_to_string(&file) {
+            Ok(text) => {
+                let parsed = zudz_gpon::parse_show2(&text);
+                for (id, v) in &parsed {
+                    println!("{id:>5} | {} | {v}", zudz_gpon::tag_name(*id));
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("❌ {e}");
+                1
+            }
+        },
+        Cmd::ExtractAll { host, user, password, out, with_web } => cmd_extract_all(&host, &user, &password, out, with_web),
+        Cmd::RegionList => {
+            println!("{:>5} | {:<34} | {:<6} | source", "code", "region", "tested");
+            for r in zudz_region::REGIONS {
+                println!("{:>5} | {:<34} | {:<6} | {}",
+                    r.code, r.name, if r.verified { "YES" } else { "-" }, r.source);
+            }
+            0
+        }
+        Cmd::RegionPrepare { host, user, password, out } => cmd_region_prepare(&host, &user, &password, &out),
+        Cmd::RegionChange { host, user, password, code, ack, out, force_unknown, perm_telnet } =>
+            cmd_region_change(&host, &user, &password, code, &ack, &out, force_unknown, perm_telnet),
+        Cmd::GponRead { host, user, password } => cmd_gpon_read(&host, &user, &password),
+        Cmd::GponClone { host, user, password, report } => cmd_gpon_clone(&host, &user, &password, &report),
+        Cmd::GponWrite { host, user, password, vid, sn8, ploam } =>
+            cmd_gpon_write(&host, &user, &password, &vid, &sn8, &ploam),
+        Cmd::About => {
+            println!("{}", meta::notice());
+            0
+        }
+    };
+    std::process::exit(rc);
+}
+
+fn cmd_extract_all(host: &str, user: &str, password: &str, out: Option<String>, with_web: bool) -> i32 {
+    let opts = zudz_extract::ExtractOptions {
+        host: host.to_string(),
+        web_user: user.to_string(),
+        web_password: password.to_string(),
+        with_web,
+    };
+    println!("🔎 ZUDZ extract-all → {host} (مسارات: tagparams + pppd + cspd-shm{}{})",
+        if with_web { " + web" } else { "" }, "");
+    match zudz_extract::extract_all(&opts) {
+        Ok(rep) => {
+            let md = zudz_extract::report_markdown(&rep);
+            println!("{md}");
+            if let Some(dir) = out {
+                let p = std::path::Path::new(&dir);
+                let _ = std::fs::create_dir_all(p);
+                let _ = std::fs::write(p.join("report.json"), zudz_extract::report_json(&rep));
+                let _ = std::fs::write(p.join("report.md"), &md);
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(p.join("report.json"), std::fs::Permissions::from_mode(0o600));
+                let _ = std::fs::set_permissions(p.join("report.md"), std::fs::Permissions::from_mode(0o600));
+                println!("✅ حُفظ {dir}/report.json و report.md (صلاحية 600)");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("❌ {e}");
+            1
+        }
+    }
+}
+
+fn cmd_region_prepare(host: &str, user: &str, password: &str, out: &str) -> i32 {
+    println!("⛔ بوابة الأمان: سحب كامل إلزامي قبل تغيير المنطقة (لأن sdefconf يمسح إعدادات المزود)…");
+    let opts = zudz_extract::ExtractOptions {
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: true,
+    };
+    match zudz_region::prepare_region_change(&opts, std::path::Path::new(out)) {
+        Ok(p) => {
+            let r = &p.report;
+            println!("✅ السحب الاستباقي اكتمل — النسخة الاحتياطية في {out}/");
+            println!("   PPPoE: {} / {} @ VLAN {}", r.pppoe.username, r.pppoe.password, r.pppoe.vlan);
+            println!("   SIP  : {} / {}", r.voip.sip_uri, r.voip.password);
+            println!("   GPON : {} / {}", r.gpon.full_sn, r.gpon.ploam_password);
+            println!();
+            println!("🔑 ACK TOKEN (صالح ساعة، لمرة واحدة):");
+            println!("   {}", p.token);
+            println!();
+            println!("للتنفيذ: zudz region-change --host {host} --code <N> --ack {}", p.token);
+            0
+        }
+        Err(e) => { eprintln!("❌ {e}"); 1 }
+    }
+}
+
+fn cmd_region_change(host: &str, user: &str, password: &str, code: u32, ack: &str, out: &str, force_unknown: bool, perm_telnet: bool) -> i32 {
+    if let Some(r) = zudz_region::find_region(code) {
+        println!("🌍 تغيير المنطقة إلى {code} ({})", r.name);
+    } else if force_unknown {
+        println!("🌍 كود مخصص {code} (--force-unknown)");
+    } else {
+        eprintln!("❌ كود غير معروف — region-list للاستعراض أو --force-unknown");
+        return 1;
+    }
+    println!("⚠️  هذا سيمسح إعدادات المزود الحالية ويعيد التشغيل!");
+    let opts = zudz_extract::ExtractOptions {
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
+    };
+    match zudz_region::change_region(&opts, code, ack, std::path::Path::new(out), force_unknown, perm_telnet) {
+        Ok(res) => {
+            println!("✅ نُفّذ sdefconf {} — {}", res.code, res.note);
+            if res.permanent_telnet_applied {
+                println!("   telnet دائم: admin/admin");
+            }
+            println!("─── مخرجات الجهاز ───");
+            println!("{}", res.raw_output);
+            0
+        }
+        Err(e) => { eprintln!("❌ {e}"); 1 }
+    }
+}
+
+fn cmd_gpon_read(host: &str, user: &str, password: &str) -> i32 {
+    let opts = zudz_extract::ExtractOptions {
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
+    };
+    match zudz_region::gpon_read(&opts) {
+        Ok(tp) => {
+            println!("VID  [2176]: {}", tp.get(&2176).cloned().unwrap_or_default());
+            println!("SN8  [2177]: {}", tp.get(&2177).cloned().unwrap_or_default());
+            println!("PWD  [2178]: {}", tp.get(&2178).cloned().unwrap_or_default());
+            println!("MAC  [256] : {}", tp.get(&256).cloned().unwrap_or_default());
+            0
+        }
+        Err(e) => { eprintln!("❌ {e}"); 1 }
+    }
+}
+
+fn cmd_gpon_clone(host: &str, user: &str, password: &str, report: &str) -> i32 {
+    println!("🧬 استنساخ هوية GPON من {report} → {host}");
+    let opts = zudz_extract::ExtractOptions {
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
+    };
+    match zudz_region::gpon_clone_from_report(&opts, std::path::Path::new(report)) {
+        Ok(res) => {
+            for c in &res.commands_run { println!("  $ {c}"); }
+            println!("─── مخرجات الجهاز ───");
+            println!("{}", res.raw_output);
+            println!("✅ اكتمل — أعد تشغيل الجهاز الهدف وراقب مؤشر PON");
+            0
+        }
+        Err(e) => { eprintln!("❌ {e}"); 1 }
+    }
+}
+
+fn cmd_gpon_write(host: &str, user: &str, password: &str, vid: &str, sn8: &str, ploam: &str) -> i32 {
+    let opts = zudz_extract::ExtractOptions {
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
+    };
+    match zudz_region::gpon_write(&opts, vid, sn8, ploam) {
+        Ok(res) => {
+            println!("{}", res.raw_output);
+            println!("✅ اكتملت الكتابة");
+            0
+        }
+        Err(e) => { eprintln!("❌ {e}"); 1 }
+    }
+}
+
+fn cmd_inspect(file: &str) -> i32 {
+    match inspect(file) {
+        Ok(info) => {
+            println!(
+                "{{\"signature\": {}, \"payload_type\": {}, \"has_zte_header\": {}}}",
+                opt_str(&info.signature),
+                info.payload_type.map(|t| t.to_string()).unwrap_or_else(|| "null".into()),
+                info.has_zte_header
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("❌ {e}");
+            1
+        }
+    }
+}
+
+fn opt_str(s: &Option<String>) -> String {
+    match s {
+        Some(v) => format!("\"{v}\""),
+        None => "null".into(),
+    }
+}
+
+fn cmd_decrypt(
+    infile: &str,
+    outfile: &str,
+    signature: Option<String>,
+    serial: Option<String>,
+    mac: Option<String>,
+    password: Option<String>,
+    key: Option<String>,
+    iv: Option<String>,
+    model: Option<String>,
+) -> i32 {
+    let params = DecryptParams {
+        signature, serial, mac, password, key, iv, model,
+        ..Default::default()
+    };
+    let raw = match std::fs::read(infile) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("❌ {e}");
+            return 1;
+        }
+    };
+    match decrypt_auto(&raw, &params) {
+        Ok((xml, desc)) => {
+            if let Err(e) = std::fs::write(outfile, &xml) {
+                eprintln!("❌ {e}");
+                return 1;
+            }
+            println!("✅ {} bytes → {outfile}", xml.len());
+            println!("🔑 {desc}");
+            0
+        }
+        Err(e) => {
+            eprintln!("❌ {e}");
+            1
+        }
+    }
+}

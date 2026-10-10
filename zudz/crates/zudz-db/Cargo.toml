@@ -1,0 +1,13 @@
+[package]
+name = "zudz-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZUDZ DB parser: <DB><Tbl><Row><DM> XML + credential extractor"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+roxmltree = "0.20"
+
+[dev-dependencies]
+serde_json = { workspace = true }

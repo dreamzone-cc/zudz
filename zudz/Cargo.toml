@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zudz-db",
+    "crates/zudz-web",
+    "crates/zudz-extract",
+    "crates/zudz-region",
+    "crates/zudz-server",
+    "crates/zudz-crypto",
+    "crates/zudz-factory",
+    "crates/zudz-telnet",
+    "crates/zudz-gpon",
+    "crates/zudz-cli",
+    "crates/zudz-meta",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "ZUDZ — ZTE Unlock, Decrypt & Zone-changer"
+
+[workspace.dependencies]
+aes = "0.8"
+sha2 = "0.10"
+md-5 = "0.10"
+flate2 = "1"
+hex = "0.4"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+lto = true
+strip = true

@@ -1,0 +1,17 @@
+[package]
+name = "zudz-extract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZUDZ extract: unified credential extraction (memory + pppd + tagparams + web)"
+
+[dependencies]
+zudz-crypto = { path = "../zudz-crypto" }
+zudz-factory = { path = "../zudz-factory" }
+zudz-telnet = { path = "../zudz-telnet" }
+zudz-gpon = { path = "../zudz-gpon" }
+zudz-web = { path = "../zudz-web" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }

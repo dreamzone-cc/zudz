@@ -1,0 +1,6 @@
+[package]
+name = "zudz-meta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZUDZ project metadata: developer, license, purpose"

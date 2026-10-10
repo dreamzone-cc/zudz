@@ -1,0 +1,18 @@
+[package]
+name = "zudz-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZUDZ crypto: ZTE config decryption (payload types 0-5) + encrypasswd"
+
+[dependencies]
+aes = { workspace = true }
+sha2 = { workspace = true }
+md-5 = { workspace = true }
+flate2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

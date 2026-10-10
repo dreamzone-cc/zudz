@@ -1,0 +1,35 @@
+# ===== بيانات خاصة — لا تُرفع أبداً / Private data — never commit =====
+# نواتج الفحص الحي والنسخ الاحتياطية (تحتوي كلمات مرور وهويات أجهزة حقيقية)
+ont_scrape/
+info_c/
+zudz_backups/
+zudz_region_backup/
+**/zudz_region_backup/
+**/zudz_backups/
+*.bin
+!zudz/tests/fixtures/sources/*.bin
+report.json
+report.md
+region_ack.json
+*.heap.bin
+*.stack.bin
+*.shm.bin
+
+# ===== Rust =====
+zudz/target/
+target/
+**/*.rs.bk
+
+# ===== Node / SvelteKit =====
+node_modules/
+zudz/app/build/
+zudz/app/.svelte-kit/
+.svelte-kit/
+dist/
+*.log
+.vite/
+
+# ===== نظام / OS =====
+.DS_Store
+Thumbs.db
+*~
