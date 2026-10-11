@@ -81,7 +81,7 @@ cd .. && ./target/release/zudz-server 8790 app/build   # run
 
 - [Rust](https://rustup.rs) (core) and [Bun](https://bun.sh) (UI) — needed on first run only
 - Linux (tested on CachyOS/Arch); the UI runs in any modern browser
-- **Telnet-based operations additionally require** the NIC MAC to be set to the diagnostic address `00:07:29:55:35:57` — the device filters port 23 on it. ZUDZ verifies this before unlocking and prints exact fix commands; see [docs/set-diagnostic-mac.md](docs/set-diagnostic-mac.md). Web scraping and config decryption do not need it.
+- **Telnet-based operations** work out of the box: the factory payload automatically carries the required diagnostic MAC, and login falls back to the stored permanent credentials if the temp session is refused. On strict firmware builds that also verify the physical NIC MAC, run the app with `ZUDZ_AUTO_MAC=1` (temporary MAC change with a dedicated password dialog, original restored on exit) — see [docs/set-diagnostic-mac.md](docs/set-diagnostic-mac.md). Web scraping and config decryption never need any of this.
 
 ## <img src="docs/icons/package.svg" width="20" align="top" alt=""> Project layout
 

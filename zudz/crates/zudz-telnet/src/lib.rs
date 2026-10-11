@@ -94,14 +94,41 @@ impl ZteTelnet {
 
     /// تسجيل دخول Login/Password ثم انتظار موجه الأوامر
     pub fn login(&mut self, user: &str, password: &str) -> Result<(), TelnetError> {
-        let data = self.read_until(&[b"ogin", b"sername", b"#", b">"], None)?;
-        if data.windows(4).any(|w| w == b"ogin") || data.windows(7).any(|w| w == b"sername") {
-            self.sendline(user);
-            self.read_until(&[b"assword"], None)?;
-            self.sendline(password);
+        self.login_attempt(user, password)
+    }
+
+    /// تسجيل دخول بسلسلة محاولات: المؤقتة أولاً ثم البدائل (root الدائم…).
+    /// عند رفض الجهاز لمحاولة (Access denied + Login: من جديد) يجرّب التالية.
+    pub fn login_fallback(&mut self, attempts: &[(String, String)]) -> Result<(), TelnetError> {
+        if attempts.is_empty() {
+            return Err(TelnetError::MarkerTimeout("لا محاولات دخول مُقدَّمة".into()));
         }
-        self.read_until(&[b">", b"#", b"$"], None)?;
-        // استهلاك المتبقي
+        for (u, p) in attempts {
+            if self.login_attempt(u, p).is_ok() {
+                return Ok(());
+            }
+            // الجهاز بعد الرفض يعيد عرض Login: — جاهزون للمحاولة التالية
+        }
+        Err(TelnetError::MarkerTimeout(format!(
+            "رُفضت كل محاولات الدخول ({}): {}",
+            attempts.len(),
+            attempts.iter().map(|(u, _)| u.clone()).collect::<Vec<_>>().join(", ")
+        )))
+    }
+
+    fn login_attempt(&mut self, user: &str, password: &str) -> Result<(), TelnetError> {
+        // انتظار Login — بعد رفض سابق تكون العلامة معروضة أصلاً فنكتفي بقراءتها
+        let _ = self.read_until(&[b"ogin", b"sername"], Some(Duration::from_secs(6)));
+        self.sendline(user);
+        let data = self.read_until(&[b"assword", b"denied", b"ncorrect"], Some(Duration::from_secs(6)))?;
+        if data.windows(7).any(|w| w == b"ncorrect") || data.windows(6).any(|w| w == b"denied") {
+            return Err(TelnetError::MarkerTimeout("Access denied (بعد المستخدم)".into()));
+        }
+        self.sendline(password);
+        let data = self.read_until(&[b">", b"#", b"$", b"denied", b"ncorrect"], Some(Duration::from_secs(9)))?;
+        if data.windows(7).any(|w| w == b"ncorrect") || data.windows(6).any(|w| w == b"denied") {
+            return Err(TelnetError::MarkerTimeout("Access denied (بعد كلمة المرور)".into()));
+        }
         self.drain();
         Ok(())
     }

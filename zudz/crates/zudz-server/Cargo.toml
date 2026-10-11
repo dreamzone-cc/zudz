@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 zudz-extract = { path = "../zudz-extract" }
+zudz-factory = { path = "../zudz-factory" }
 zudz-region = { path = "../zudz-region" }
 zudz-crypto = { path = "../zudz-crypto" }
 tiny_http = "0.12"

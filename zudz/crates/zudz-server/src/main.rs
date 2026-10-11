@@ -3,7 +3,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tiny_http::{Header, Method, Response, Server};
 use zudz_extract::ExtractOptions;
 use zudz_meta;
@@ -16,6 +16,64 @@ struct State {
 struct StateInner {
     last_report: Option<serde_json::Value>,
     ack_token: Option<(String, u64)>, // (token, created_unix)
+    /// حالة إعداد MAC التلقائي (يعرضها /api/mac-status)
+    mac: serde_json::Value,
+}
+
+/// خيط الإعداد التلقائي للـ MAC: يفعّل العنوان التشخيصي على كرت الشبكة نحو
+/// الجهاز عند الحاجة — عبر عملية حارسة مرتفعة الصلاحيات (نافذة كلمة سر عند
+/// طلبها sudo) تعيد الأصلي تلقائياً متى أُغلق التطبيق أو انهار.
+fn mac_auto_setup(state: &Arc<State>) {
+    let host = std::env::var("ZUDZ_HOST").unwrap_or_else(|_| "192.168.1.1".into());
+    let set_status = |v: serde_json::Value| {
+        if let Ok(mut st) = state.inner.lock() {
+            st.mac = v;
+        }
+    };
+
+    // افتراضياً: لا تغيير فعلي للـ MAC — الفحوص الميدانية على F6600P
+    // (V9.0.10P25N1) أثبتت أن الحمولة وحدها تكفي (تحمل العنوان التشخيصي)
+    // والجهاز لا يطابق MAC مصدر الطلب. التفعيل الاختياري لبقية البرمجيات:
+    // ZUDZ_AUTO_MAC=1
+    let enabled = std::env::var("ZUDZ_AUTO_MAC").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    if !enabled {
+        let note = if let Ok(Some((iface, mac))) = zudz_factory::nic_mac_towards(&host) {
+            format!("الحمولة تحمل MAC التشخيصي (يكفي على هذه العائلة) — كرت {iface} بـ {} كما هو؛ فعّل ZUDZ_AUTO_MAC=1 إن ألزمت برمجيتك التغيير الفعلي", zudz_factory::mac_str(&mac))
+        } else {
+            "لا مسار نحو الجهاز — مسارات الويب وفك التشفير تعمل بلا تغيير".into()
+        };
+        set_status(serde_json::json!({ "status": "skipped", "mode": "payload-only", "note": note }));
+        return;
+    }
+
+    let (iface, mac) = match zudz_factory::nic_mac_towards(&host) {
+        Ok(Some(pair)) => pair,
+        _ => {
+            set_status(serde_json::json!({ "status": "skipped", "reason": "لا مسار شبكي نحو الجهاز — تعمل مسارات الويب وفك التشفير دون تغيير MAC" }));
+            return;
+        }
+    };
+    if mac == zudz_factory::DIAGNOSTIC_MAC {
+        set_status(serde_json::json!({ "status": "active", "iface": iface, "mode": "already-set", "note": "MAC التشخيصي مثبّت على الكرت بالفعل" }));
+        return;
+    }
+    let original = zudz_factory::mac_str(&mac);
+    println!("🛡️  MAC: تفعيل العنوان التشخيصي على {iface} (الأصلي {original} — يُسترجع تلقائياً عند الإغلاق)");
+    match zudz_factory::macctl::spawn_mac_watch(
+        std::process::id(),
+        &iface,
+        &original,
+        &zudz_factory::macctl::default_log_path(),
+    ) {
+        Ok(()) => set_status(serde_json::json!({
+            "status": "active", "iface": iface, "original": original,
+            "note": "MAC التشخيصي مفعّل مؤقتاً — يعود الأصلي تلقائياً عند إغلاق التطبيق"
+        })),
+        Err(e) => set_status(serde_json::json!({
+            "status": "failed", "iface": iface, "error": e,
+            "note": "عمليات telnet تحتاج MAC التشخيصي — راجع docs/set-diagnostic-mac.md"
+        })),
+    }
 }
 
 fn opts_from(v: &serde_json::Value) -> ExtractOptions {
@@ -173,12 +231,36 @@ fn serve_static(mut req: tiny_http::Request, dist: &Path, url: &str) {
 }
 
 fn main() {
+    // وضع العملية الحارسة: zudz-server --mac-watch <parent_pid> <iface> <orig_mac>
+    // (تُطلق مرتفعة الصلاحيات من الخادم الرئيسي — تدير دورة MAC كاملة ثم تخرج)
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(i) = argv.iter().position(|a| a == "--mac-watch") {
+        let pid: u32 = argv.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let iface = argv.get(i + 2).cloned().unwrap_or_default();
+        let orig = argv.get(i + 3).cloned().unwrap_or_default();
+        std::process::exit(zudz_factory::macctl::mac_watch_main(pid, &iface, &orig));
+    }
+
     let port: u16 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(8790);
     let dist = std::env::args()
         .nth(2)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("app/build"));
-    let state = State { inner: Mutex::new(StateInner { last_report: None, ack_token: None }) };
+    let state = Arc::new(State {
+        inner: Mutex::new(StateInner {
+            last_report: None,
+            ack_token: None,
+            mac: serde_json::json!({ "status": "checking" }),
+        }),
+    });
+
+    // تغيير MAC التلقائي: خيط خلفي — يفعّل العنوان التشخيصي عند الحاجة
+    // (بنافذة كلمة سر مخصصة عند طلبها sudo) ويعيد الأصلي تلقائياً عند إغلاق
+    // التطبيق عبر عملية حارسة تراقب حياتنا في /proc.
+    {
+        let st = state.clone();
+        std::thread::spawn(move || mac_auto_setup(&st));
+    }
 
     let server = Server::http(("127.0.0.1", port)).expect("bind");
     println!("╔══════════════════════════════════════════╗");
@@ -229,6 +311,10 @@ fn handle_api(mut req: tiny_http::Request, method: &Method, url: &str, st: &mut 
                     .map(|r| serde_json::json!({ "code": r.code, "name": r.name, "verified": r.verified, "source": r.source }))
                     .collect();
                 ok_json(req, serde_json::json!({ "regions": regions }));
+            }
+            "/api/mac-status" => {
+                let v = st.mac.clone();
+                ok_json(req, v);
             }
             _ => err_json(req, "not found"),
         }

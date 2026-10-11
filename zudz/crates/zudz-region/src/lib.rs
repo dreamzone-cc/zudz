@@ -242,7 +242,7 @@ pub fn change_region(
         .map_err(|e| RegionError::Extract(format!("unlock: {e}")))?;
     let mut tn = zudz_telnet::ZteTelnet::connect(&opts.host, 23, 15)
         .map_err(|e| RegionError::Extract(e.to_string()))?;
-    tn.login(&r.telnet_user, &r.telnet_pass)
+    tn.login_fallback(&zudz_extract::telnet_attempts(&r))
         .map_err(|e| RegionError::Extract(e.to_string()))?;
     let _ = tn.run_capture("", 2);
 
@@ -286,7 +286,7 @@ pub fn gpon_read(opts: &ExtractOptions) -> Result<zudz_gpon_lite::TagMap, Region
         .map_err(|e| RegionError::Extract(format!("unlock: {e}")))?;
     let mut tn = zudz_telnet::ZteTelnet::connect(&opts.host, 23, 15)
         .map_err(|e| RegionError::Extract(e.to_string()))?;
-    tn.login(&r.telnet_user, &r.telnet_pass)
+    tn.login_fallback(&zudz_extract::telnet_attempts(&r))
         .map_err(|e| RegionError::Extract(e.to_string()))?;
     let _ = tn.run_capture("", 2);
     let _ = tn.run_capture("setmac show2 > /tmp/zudz_g.txt 2>&1", 3);
@@ -319,7 +319,7 @@ pub fn gpon_write(
         .map_err(|e| RegionError::Extract(format!("unlock: {e}")))?;
     let mut tn = zudz_telnet::ZteTelnet::connect(&opts.host, 23, 15)
         .map_err(|e| RegionError::Extract(e.to_string()))?;
-    tn.login(&r.telnet_user, &r.telnet_pass)
+    tn.login_fallback(&zudz_extract::telnet_attempts(&r))
         .map_err(|e| RegionError::Extract(e.to_string()))?;
     let _ = tn.run_capture("", 2);
 

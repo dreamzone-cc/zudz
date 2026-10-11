@@ -1,6 +1,8 @@
-# Set the diagnostic MAC address (required for telnet unlock)
+# The diagnostic MAC address (when your firmware requires it)
 
-ZTE ONT devices only open the factory telnet port for a client whose **network card MAC equals `00:07:29:55:35:57`** (the diagnostic address embedded in ZTE's factory tooling). ZUDZ checks this before unlocking and refuses with exact fix commands otherwise — without it the factory protocol completes but port 23 stays silently filtered.
+ZTE ONT devices accept the factory-mode challenge payload only when it carries the diagnostic address `00:07:29:55:35:57` — **ZUDZ embeds it in the payload automatically** (since v0.3.0), which is all most firmwares need.
+
+On a few firmware builds the device additionally verifies the **physical NIC MAC** of the connecting machine against that address and filters port 23. Field tests on an F6600P (V9.0.10P25N1) showed the physical change is **not** required — payload-only works. If your device opens the factory handshake but telnet never appears (or drops SYNs), your firmware is one of the strict ones: set the NIC MAC as below, or run the app with `ZUDZ_AUTO_MAC=1` to have ZUDZ change it temporarily for the session and restore it automatically on exit.
 
 The change is temporary with method 1 (reverts on reboot) and persistent with methods 2–4.
 

@@ -1,11 +1,13 @@
 //! ZUDZ factory — بروتوكول وضع المصنع لفتح telnet على ZTE F6600P/F6201B+
 //!
 //! منقول بايت-لمبايت من `zte-toolkit/ztk/onufactory.py` (المسترد أصلاً من تفكيك
-//! zteonu3.06). الاكتشافان الحاسمان مضمّنان:
-//! 1) CheckLoginAuth ببيانات واجهة الويب (لا حساب factorymode).
-//! 2) ماك الحمولة = ماك الإطار الفعلي (get_local_mac) — لا حاجة لتغيير MAC.
+//! zteonu3.06). الحقائق المثبتة (v0.2.1):
+//! 1) CheckLoginAuth ببيانات واجهة الويب (لا حساب factorymode) — الجهاز يقبلهما.
+//! 2) الجهاز يقفل telnet على الماك التشخيصي `00:07:29:55:35:57` — الحمولة تحمله
+//!    ويجب أن يحمله كرت الشبكة الفعلي أيضاً (تغييره مؤقت وتلقائي عبر macctl).
 
 pub mod http;
+pub mod macctl;
 pub mod unlock;
 
 pub use unlock::{
@@ -15,8 +17,8 @@ pub use unlock::{
 
 pub const FACTORY_USER: &str = "factorymode";
 pub const FACTORY_PASS: &str = "nE%jA@5b";
-/// الماك التشخيصي السحري (مسار احتياطي فقط — يتطلب تغيير ماك الكرت إليه)
-pub const LOCAL_MAC: [u8; 6] = [0x00, 0x07, 0x29, 0x55, 0x35, 0x57];
+/// اسم قديم لـ DIAGNOSTIC_MAC (محفوظ للتوافق)
+pub const LOCAL_MAC: [u8; 6] = DIAGNOSTIC_MAC;
 
 /// KEY_POOL — 96 بايت (مستردة من تفكيك محرك بايثون في zteonu3.06_all_en.exe)
 pub const KEY_POOL: [u8; 96] = [

@@ -173,14 +173,13 @@ pub fn check_diagnostic_mac(host: &str) -> Result<(), FactoryError> {
 }
 
 /// التنفيذ الكامل: يفتح telnet ويعيد البيانات المؤقتة.
-/// user/password = بيانات واجهة الويب (افتراضياً على هذه العائلة يمكن حساب المصنع).
+/// user/password = بيانات واجهة الويب (admin/admin على هذه العائلة؛ حساب
+/// factorymode يُرفض بـ 401 على F6600P V9.0.10P25N1).
 ///
-/// يطابق سلوك أداة zteonu الأصلية:
-/// 1. يرفض العمل إذا كان ماك كرت الشبكة نحو الجهاز ≠ DIAGNOSTIC_MAC
-///    (الجهاز يقفل telnet على هذا العنوان — بدونه يكتمل البروتوكول ولا يفتح المنفذ).
-/// 2. يضمّن DIAGNOSTIC_MAC في الحمولة — وليس ماك الكرت الحقيقي.
+/// يطابق الأداة المرجعية المُتحقَّق منها فعلياً على الجهاز (تقرير 02_DEVICE_TEST):
+/// الحمولة تحمل DIAGNOSTIC_MAC دائماً — وهو شرط فتح telnet — بينما MAC كرت
+/// الشبكة الفعلي **لا يلزم تغييره** (الجهاز لا يطابقه مع مصدر الطلب).
 pub fn unlock_telnet(host: &str, user: &str, password: &str) -> Result<UnlockResult, FactoryError> {
-    check_diagnostic_mac(host)?;
     unlock_telnet_with_mac(host, user, password, &DIAGNOSTIC_MAC)
 }
 

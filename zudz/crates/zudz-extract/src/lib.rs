@@ -93,13 +93,39 @@ impl Default for ExtractOptions {
     }
 }
 
+/// سلسلة محاولات دخول telnet: المؤقتة من الفتح أولاً، ثم root الدائم
+/// (ZTE + PLOAM من آخر تقرير محفوظ) — بعض البرمجيات تُبقي خادم telnet
+/// عالقاً على بيانات أول جلسة فتُرفض المؤقتة الجديدة.
+pub fn telnet_attempts(r: &zudz_factory::UnlockResult) -> Vec<(String, String)> {
+    let mut v = vec![(r.telnet_user.clone(), r.telnet_pass.clone())];
+    if let Ok(pw) = std::env::var("ZUDZ_TELNET_ROOT_PWD") {
+        if !pw.is_empty() {
+            v.push(("root".into(), pw));
+        }
+    } else {
+        for p in ["zudz_region_backup/report.json", "zudz_gpon_backup/report.json"] {
+            if let Ok(d) = std::fs::read_to_string(p) {
+                if let Ok(j) = serde_json::from_str::<serde_json::Value>(&d) {
+                    if let Some(ploam) = j.pointer("/gpon/ploam_password").and_then(|x| x.as_str()) {
+                        if !ploam.is_empty() {
+                            v.push(("root".into(), format!("ZTE{ploam}")));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    v
+}
+
 /// الاستخراج الكامل عبر telnet (بعد فتح المصنع تلقائياً)
 pub fn extract_all(opts: &ExtractOptions) -> Result<ZudzReport, ExtractError> {
     let r = zudz_factory::unlock_telnet(&opts.host, &opts.web_user, &opts.web_password)
         .map_err(|e| ExtractError::Unlock(e.to_string()))?;
     let mut tn = ZteTelnet::connect(&opts.host, 23, 12)
         .map_err(|e| ExtractError::Telnet(e.to_string()))?;
-    tn.login(&r.telnet_user, &r.telnet_pass)
+    tn.login_fallback(&telnet_attempts(&r))
         .map_err(|e| ExtractError::Telnet(e.to_string()))?;
     let report = extract_with_telnet(&mut tn, opts)?;
     tn.sendline("exit");
