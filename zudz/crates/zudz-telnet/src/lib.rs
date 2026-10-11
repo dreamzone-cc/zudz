@@ -92,6 +92,32 @@ impl ZteTelnet {
         let _ = self.stream.flush();
     }
 
+    /// اتصال مع إعادة محاولة — خادم telnet الخاص بوضع المصنع قد يتأخر لحظة
+    /// بعد رد mode=2 قبل أن يستمع، فالمحاولة الفورية قد تسبقه (سباق زمني).
+    pub fn connect_retry(
+        host: &str,
+        port: u16,
+        timeout_secs: u64,
+        attempts: u32,
+        delay_ms: u64,
+    ) -> Result<Self, TelnetError> {
+        let mut last: Option<TelnetError> = None;
+        for i in 0..attempts.max(1) {
+            if i > 0 {
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+            match Self::connect(host, port, timeout_secs) {
+                Ok(t) => return Ok(t),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.unwrap_or(TelnetError::Connect {
+            host: host.into(),
+            port,
+            reason: "فشلت كل المحاولات".into(),
+        }))
+    }
+
     /// تسجيل دخول Login/Password ثم انتظار موجه الأوامر
     pub fn login(&mut self, user: &str, password: &str) -> Result<(), TelnetError> {
         self.login_attempt(user, password)

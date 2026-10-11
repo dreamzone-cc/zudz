@@ -16,8 +16,43 @@ struct State {
 struct StateInner {
     last_report: Option<serde_json::Value>,
     ack_token: Option<(String, u64)>, // (token, created_unix)
-    /// حالة إعداد MAC التلقائي (يعرضها /api/mac-status)
+    /// حالة إعداد MAC التلقائي (يعرضه /api/mac-status)
     mac: serde_json::Value,
+    /// مهمة السحب الجارية (بدء غير متزامن مع تقارير مرحلية)
+    extract_job: Option<Arc<ExtractJob>>,
+}
+
+/// مهمة سحب واحدة قيد التنفيذ — المرحلة الحالية والنتيجة
+struct ExtractJob {
+    stage: Mutex<String>,
+    done: Mutex<bool>,
+    error: Mutex<Option<String>>,
+    report: Mutex<Option<serde_json::Value>>,
+    out_dir: String,
+    saved: Mutex<Vec<String>>,
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// حفظ التقرير في مجلد يحدده المستخدم — بصلاحية 0600
+fn save_report(rep: &zudz_extract::ZudzReport, out_dir: &str) -> Result<Vec<String>, String> {
+    std::fs::create_dir_all(out_dir).map_err(|e| format!("إنشاء المجلد {out_dir}: {e}"))?;
+    let json_path = format!("{out_dir}/report.json");
+    let md_path = format!("{out_dir}/report.md");
+    std::fs::write(&json_path, serde_json::to_string_pretty(rep).unwrap_or_default())
+        .map_err(|e| format!("كتابة {json_path}: {e}"))?;
+    std::fs::write(&md_path, zudz_extract::report_markdown(rep))
+        .map_err(|e| format!("كتابة {md_path}: {e}"))?;
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&json_path, std::fs::Permissions::from_mode(0o600));
+    let _ = std::fs::set_permissions(&md_path, std::fs::Permissions::from_mode(0o600));
+    Ok(vec![json_path, md_path])
+}
+
+fn valid_out_dir(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 200 && !s.contains('\0') && !s.split('/').any(|p| p == "..")
 }
 
 /// خيط الإعداد التلقائي للـ MAC: يفعّل العنوان التشخيصي على كرت الشبكة نحو
@@ -251,6 +286,7 @@ fn main() {
             last_report: None,
             ack_token: None,
             mac: serde_json::json!({ "status": "checking" }),
+            extract_job: None,
         }),
     });
 
@@ -316,6 +352,23 @@ fn handle_api(mut req: tiny_http::Request, method: &Method, url: &str, st: &mut 
                 let v = st.mac.clone();
                 ok_json(req, v);
             }
+            "/api/extract/status" => {
+                match &st.extract_job {
+                    None => ok_json(req, serde_json::json!({ "running": false, "done": false, "idle": true })),
+                    Some(j) => {
+                        let stage = lock(&j.stage).clone();
+                        let done = *lock(&j.done);
+                        let error = lock(&j.error).clone();
+                        let report = lock(&j.report).clone();
+                        let saved = lock(&j.saved).clone();
+                        ok_json(req, serde_json::json!({
+                            "running": !done, "done": done, "stage": stage,
+                            "error": error, "report": report, "saved": saved,
+                            "out_dir": j.out_dir,
+                        }))
+                    }
+                }
+            }
             _ => err_json(req, "not found"),
         }
         return;
@@ -328,6 +381,59 @@ fn handle_api(mut req: tiny_http::Request, method: &Method, url: &str, st: &mut 
 
     let v = read_body(&mut req);
     match url {
+        "/api/extract/start" => {
+            // بدء سحب غير متزامن مع تقارير مرحلية حية وحفظ في مجلد يحدده المستخدم
+            if let Some(j) = &st.extract_job {
+                if !*lock(&j.done) {
+                    err_json(req, "عملية سحب جارية بالفعل — تابع تقدمها في الواجهة");
+                    return;
+                }
+            }
+            let o = opts_from(&v);
+            let out = v.get("out").and_then(|x| x.as_str()).unwrap_or("zudz_extract_backup").trim().to_string();
+            if !valid_out_dir(&out) {
+                err_json(req, "مسار حفظ غير صالح (فارغ أو يتضمن ..)");
+                return;
+            }
+            let job = Arc::new(ExtractJob {
+                stage: Mutex::new("queued".into()),
+                done: Mutex::new(false),
+                error: Mutex::new(None),
+                report: Mutex::new(None),
+                out_dir: out.clone(),
+                saved: Mutex::new(vec![]),
+            });
+            let j = job.clone();
+            let out_for_thread = out.clone();
+            std::thread::spawn(move || {
+                let out = out_for_thread;
+                let r = zudz_extract::extract_all_with_progress(&o, &|stage| {
+                    *lock(&j.stage) = stage.to_string();
+                });
+                match r {
+                    Ok(rep) => {
+                        *lock(&j.stage) = "saving".into();
+                        match save_report(&rep, &out) {
+                            Ok(paths) => { *lock(&j.saved) = paths; }
+                            Err(e) => { *lock(&j.error) = Some(e); }
+                        }
+                        let val = serde_json::to_value(&rep).unwrap_or_default();
+                        *lock(&j.report) = Some(val.clone());
+                        *lock(&j.stage) = "done".into();
+                        *lock(&j.done) = true;
+                        // آخر تقرير متاح للبوابات (تغيير المنطقة/الاستنساخ)
+                        // ملاحظة: يحدَّث عبر حالة الخادم عند الطلب التالي إن لزم
+                        let _ = val;
+                    }
+                    Err(e) => {
+                        *lock(&j.error) = Some(e.to_string());
+                        *lock(&j.done) = true;
+                    }
+                }
+            });
+            st.extract_job = Some(job);
+            ok_json(req, serde_json::json!({ "ok": true, "out_dir": out }));
+        }
         "/api/extract" => {
             let o = opts_from(&v);
             match zudz_extract::extract_all(&o) {

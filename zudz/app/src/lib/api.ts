@@ -37,7 +37,7 @@ export interface Meta {
 /// قيم احتياطية ثابتة (عندما لا يعمل الخادم) — مطابقة لـ zudz-meta
 export const FALLBACK_META: Meta = {
   name: 'ZUDZ',
-  version: '0.3.0',
+  version: '0.4.0',
   tagline: 'ZTE Unlock, Decrypt & Zone-changer',
   author: 'dreamzone-cc',
   homepage: 'https://github.com/dreamzone-cc',
@@ -100,6 +100,10 @@ export const api = {
   regions: () => call<{ regions: Region[] }>('/api/regions'),
   extract: (p: { host: string; user: string; password: string }) =>
     call<{ ok: boolean; report: Report }>('/api/extract', p),
+  extractStart: (p: { host: string; user: string; password: string; out: string }) =>
+    call<{ ok: boolean; out_dir: string }>('/api/extract/start', p),
+  extractStatus: () =>
+    call<{ running: boolean; done: boolean; idle?: boolean; stage: string; error: string | null; report: Report | null; saved: string[]; out_dir: string }>('/api/extract/status'),
   regionPrepare: (p: { host: string; user: string; password: string }) =>
     call<{ ok: boolean; token: string; summary: Report }>('/api/region/prepare', p),
   regionChange: (p: { host: string; user: string; password: string; code: number; ack: string; perm_telnet: boolean; force_unknown?: boolean }) =>

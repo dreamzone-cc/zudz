@@ -121,19 +121,40 @@ pub fn telnet_attempts(r: &zudz_factory::UnlockResult) -> Vec<(String, String)> 
 
 /// الاستخراج الكامل عبر telnet (بعد فتح المصنع تلقائياً)
 pub fn extract_all(opts: &ExtractOptions) -> Result<ZudzReport, ExtractError> {
+    extract_all_with_progress(opts, &|_| {})
+}
+
+/// الاستخراج الكامل مع تقارير مرحلية حية — تُستدعى عند بدء كل مرحلة
+/// (المفاتيح: unlock, telnet, tagparams, pppd, cspd, web, report)
+pub fn extract_all_with_progress(
+    opts: &ExtractOptions,
+    progress: &(dyn Fn(&str) + Send),
+) -> Result<ZudzReport, ExtractError> {
+    progress("unlock");
     let r = zudz_factory::unlock_telnet(&opts.host, &opts.web_user, &opts.web_password)
         .map_err(|e| ExtractError::Unlock(e.to_string()))?;
-    let mut tn = ZteTelnet::connect(&opts.host, 23, 12)
+    progress("telnet");
+    let mut tn = ZteTelnet::connect_retry(&opts.host, 23, 4, 6, 1200)
         .map_err(|e| ExtractError::Telnet(e.to_string()))?;
     tn.login_fallback(&telnet_attempts(&r))
         .map_err(|e| ExtractError::Telnet(e.to_string()))?;
-    let report = extract_with_telnet(&mut tn, opts)?;
+    let report = extract_with_telnet_progress(&mut tn, opts, progress)?;
     tn.sendline("exit");
+    progress("report");
     Ok(report)
 }
 
 /// الاستخراج عبر جلسة telnet قائمة (يفصلها extract_all للأغراض الاختبارية)
 pub fn extract_with_telnet(tn: &mut ZteTelnet, opts: &ExtractOptions) -> Result<ZudzReport, ExtractError> {
+    extract_with_telnet_progress(tn, opts, &|_| {})
+}
+
+pub fn extract_with_telnet_progress(
+    tn: &mut ZteTelnet,
+    opts: &ExtractOptions,
+    progress: &(dyn Fn(&str) + Send),
+) -> Result<ZudzReport, ExtractError> {
+    progress("tagparams");
     let _ = tn.run_capture("", 2);
     let mut rep = ZudzReport {
         host: opts.host.clone(),
@@ -165,6 +186,7 @@ pub fn extract_with_telnet(tn: &mut ZteTelnet, opts: &ExtractOptions) -> Result<
     }
 
     // ── A1: خيارات pppd ──────────────────────────────────────────
+    progress("pppd");
     let opts_txt = tn.run_capture("cat /var/tmp/ppp/options.* 2>/dev/null", 4);
     for line in opts_txt.lines() {
         if let Some(v) = line.trim().strip_prefix("user ") {
@@ -184,6 +206,7 @@ pub fn extract_with_telnet(tn: &mut ZteTelnet, opts: &ExtractOptions) -> Result<
     }
 
     // ── A2: ذاكرة cspd المشتركة (SIP URI + كلمة السر) ────────────
+    progress("cspd");
     if let Ok(sip) = scrape_shm_sip(tn) {
         rep.voip = sip;
         rep.sources.push("cspd-shm".into());
@@ -191,6 +214,7 @@ pub fn extract_with_telnet(tn: &mut ZteTelnet, opts: &ExtractOptions) -> Result<
 
     // ── C: ويب LUA (إثرائي) ────────────────────────────────────────
     if opts.with_web {
+        progress("web");
         if let Ok(mut s) = zudz_web::LuaSession::login(&opts.host, &opts.web_user, &opts.web_password) {
             if let Ok(w) = s.scrape() {
                 if rep.device.model.is_empty() {
