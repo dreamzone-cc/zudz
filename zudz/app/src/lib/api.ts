@@ -85,11 +85,20 @@ export interface BackupInfo {
 }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    // فشل الشبكة = الخادم المحلي متوقف — رسالة قابلة للتنفيذ بدل "Failed to fetch"
+    throw new Error(
+      '⚠️ الخادم المحلي لا يستجيب — أعد تشغيل الأداة (run-zudz.sh أو أيقونة ZUDZ) ثم حدّث الصفحة\n' +
+        'Server not responding — relaunch ZUDZ (run-zudz.sh or the ZUDZ icon) and refresh'
+    );
+  }
   const j = (await res.json()) as T & { ok?: boolean; error?: string };
   if (j && j.ok === false) throw new Error(j.error || 'API error');
   return j;
