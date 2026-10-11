@@ -37,7 +37,7 @@ export interface Meta {
 /// قيم احتياطية ثابتة (عندما لا يعمل الخادم) — مطابقة لـ zudz-meta
 export const FALLBACK_META: Meta = {
   name: 'ZUDZ',
-  version: '0.4.0',
+  version: '0.5.0',
   tagline: 'ZTE Unlock, Decrypt & Zone-changer',
   author: 'dreamzone-cc',
   homepage: 'https://github.com/dreamzone-cc',

@@ -10,8 +10,10 @@ zudz-crypto = { path = "../zudz-crypto" }
 zudz-factory = { path = "../zudz-factory" }
 zudz-telnet = { path = "../zudz-telnet" }
 zudz-gpon = { path = "../zudz-gpon" }
+zudz-db = { path = "../zudz-db" }
 zudz-web = { path = "../zudz-web" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 regex = { workspace = true }
+hex = { workspace = true }
 thiserror = { workspace = true }

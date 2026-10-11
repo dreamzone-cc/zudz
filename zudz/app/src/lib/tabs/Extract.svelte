@@ -14,8 +14,8 @@
   let saved: string[] = [];
 
   // مراحل السحب الحقيقية كما تُبلّغ من الخادم
-  const STAGES = ['extract.stage.unlock', 'extract.stage.telnet', 'extract.stage.tagparams', 'extract.stage.pppd', 'extract.stage.cspd', 'extract.stage.web', 'extract.stage.report'];
-  const STAGE_KEYS = ['unlock', 'telnet', 'tagparams', 'pppd', 'cspd', 'web', 'report', 'saving', 'done'];
+  const STAGES = ['extract.stage.unlock', 'extract.stage.telnet', 'extract.stage.tagparams', 'extract.stage.pppd', 'extract.stage.cspd', 'extract.stage.config', 'extract.stage.web', 'extract.stage.report'];
+  const STAGE_KEYS = ['unlock', 'telnet', 'tagparams', 'pppd', 'cspd', 'config', 'web', 'report', 'saving', 'done'];
   let activeStage = -1;
   let pct = 0;
   let pollTimer: ReturnType<typeof setInterval> | null = null;

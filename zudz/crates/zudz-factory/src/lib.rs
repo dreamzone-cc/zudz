@@ -30,6 +30,26 @@ pub const KEY_POOL: [u8; 96] = [
     220, 103, 159, 158, 220, 70, 55, 95, 132, 159, 111, 118, 206, 121, 79, 73,
 ];
 
+/// مجمّع محرك Go بدون --new (zteonu06.exe @ 0xb946c0) — احتياطي عند قطع SendInfo
+pub const KEY_POOL_GO_OLD: [u8; 96] = [
+    123, 86, 176, 247, 218, 14, 104, 82, 200, 25, 243, 43, 132, 144, 121, 229,
+    98, 248, 234, 210, 100, 147, 135, 223, 115, 215, 251, 204, 170, 254, 117, 67,
+    28, 41, 223, 76, 82, 44, 110, 123, 69, 61, 31, 241, 222, 188, 39, 133,
+    138, 69, 145, 190, 56, 19, 222, 103, 50, 8, 84, 17, 117, 244, 211, 180,
+    164, 179, 18, 134, 103, 35, 153, 76, 97, 127, 177, 210, 48, 223, 71, 241,
+    118, 147, 163, 140, 149, 211, 89, 191, 135, 142, 243, 179, 228, 118, 73, 136,
+];
+
+/// مجمّع محرك Go مع --new (zteonu06.exe @ 0xb94720) — احتياطي عند قطع SendInfo
+pub const KEY_POOL_GO_NEW: [u8; 96] = [
+    140, 35, 101, 209, 252, 50, 69, 55, 17, 40, 113, 99, 7, 32, 105, 20,
+    115, 231, 212, 83, 19, 36, 54, 194, 181, 225, 252, 207, 138, 154, 65, 137,
+    60, 73, 207, 92, 114, 140, 158, 235, 117, 13, 63, 209, 254, 204, 87, 101,
+    122, 53, 33, 62, 104, 83, 126, 151, 2, 72, 116, 113, 149, 52, 83, 132,
+    180, 195, 226, 214, 39, 61, 230, 93, 114, 156, 188, 61, 3, 253, 118, 193,
+    156, 37, 168, 146, 71, 228, 24, 15, 36, 63, 79, 103, 236, 151, 244, 153,
+];
+
 pub const FNV_MULT: u64 = 16_777_619;
 pub const MASK: u64 = 2_147_483_711; // 0x8000003F
 pub const MODULUS: u64 = 30_049;
@@ -162,6 +182,26 @@ mod tests {
         assert_eq!(parse_link_mac("link/ether 00:07:29:55:35:57"), Some(DIAGNOSTIC_MAC));
         assert_eq!(parse_link_mac("no mac here"), None);
         assert_eq!(parse_link_mac("link/ether 00:07"), None);
+    }
+
+    #[test]
+    fn key_pools_three_distinct_fallbacks() {
+        // المجمّعات الاحتياطية من محرك Go (مستردة من ثنائية zteonu06.exe)
+        assert_eq!(KEY_POOL.len(), 96);
+        assert_eq!(KEY_POOL_GO_OLD.len(), 96);
+        assert_eq!(KEY_POOL_GO_NEW.len(), 96);
+        assert_ne!(KEY_POOL, KEY_POOL_GO_OLD);
+        assert_ne!(KEY_POOL, KEY_POOL_GO_NEW);
+        assert_ne!(KEY_POOL_GO_OLD, KEY_POOL_GO_NEW);
+        // الاشتقاق من كل مجمّع يعطي مفاتيح مختلفة لنفس التحدّي
+        let (k1, i) = crate::unlock::derive_key_from_pool_pub(&KEY_POOL, 28);
+        let (k2, _) = crate::unlock::derive_key_from_pool_pub(&KEY_POOL_GO_NEW, 28);
+        let (k3, _) = crate::unlock::derive_key_from_pool_pub(&KEY_POOL_GO_OLD, 28);
+        assert_eq!(i, 28);
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        // والمجمّع الأساسي يطابق متجه الجلسة الحية الموثّق
+        assert_eq!(hex::encode(k1), "df1fc47cf9cc7a2977b97b9e90888a447be9d250bfc0745b");
     }
 
     #[test]

@@ -27,6 +27,7 @@ export default {
   'extract.stage.tagparams': 'قراءة TagParams',
   'extract.stage.pppd': 'خيارات pppd',
   'extract.stage.cspd': 'ذاكرة cspd',
+  'extract.stage.config': 'سحب وفك الإعداد الكاملة',
   'extract.stage.web': 'واجهة الويب',
   'extract.stage.report': 'توليد التقرير',
   'extract.desc': 'فتح المصنع ← telnet ← PPPoE + VoIP + هوية GPON (المسارات الأربعة)',

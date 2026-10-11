@@ -27,6 +27,7 @@ export default {
   'extract.stage.tagparams': 'Reading TagParams',
   'extract.stage.pppd': 'pppd options',
   'extract.stage.cspd': 'cspd memory',
+  'extract.stage.config': 'Pull & decrypt full config',
   'extract.stage.web': 'Web interface',
   'extract.stage.report': 'Building report',
   'extract.desc': 'Factory mode → telnet → PPPoE + VoIP + GPON identity (4 paths)',

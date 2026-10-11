@@ -212,6 +212,25 @@ pub fn extract_with_telnet_progress(
         rep.sources.push("cspd-shm".into());
     }
 
+    // ── B: سحب الإعداد الكاملة عبر telnet وفكّها ودمجها ───────────
+    // hexdump فوق telnet ← فك AES-CBC (مفتاح serial+MAC معكوس) ← تحليل DB
+    progress("config");
+    if let Some((serial8, mac)) = config_key_material(&rep) {
+        if let Some(bytes) = pull_file_hexdump(tn, "/userconfig/cfg/db_user_cfg.xml") {
+            let params = zudz_crypto::DecryptParams {
+                serial: Some(serial8),
+                mac: Some(mac),
+                ..Default::default()
+            };
+            if let Ok((xml, desc)) = zudz_crypto::decrypt_auto(&bytes, &params) {
+                let db = zudz_db::parse_db(&String::from_utf8_lossy(&xml));
+                let ex = zudz_db::extract(&db);
+                merge_db_into_report(&mut rep, &ex);
+                rep.sources.push(format!("db_user_cfg ({desc})"));
+            }
+        }
+    }
+
     // ── C: ويب LUA (إثرائي) ────────────────────────────────────────
     if opts.with_web {
         progress("web");
@@ -250,6 +269,78 @@ pub fn extract_with_telnet_progress(
 }
 
 /// يبث ذاكرة cspd المشتركة عبر hexdump ويفك عنقدة قيم SIP
+/// مادة مفتاح فك الإعداد: (آخر 8 من السيريال GPON، MAC الأساسي)
+fn config_key_material(rep: &ZudzReport) -> Option<(String, String)> {
+    let sn8 = if rep.gpon.sn8.len() == 8 {
+        rep.gpon.sn8.clone()
+    } else if rep.gpon.full_sn.len() >= 8 {
+        rep.gpon.full_sn[rep.gpon.full_sn.len() - 8..].to_string()
+    } else {
+        return None;
+    };
+    let mac = rep.device.base_mac.clone();
+    if mac.is_empty() { None } else { Some((sn8, mac)) }
+}
+
+/// سحب ملف ثنائي من الجهاز عبر hexdump فوق telnet (بديل TFTP بلا صلاحيات)
+fn pull_file_hexdump(tn: &mut ZteTelnet, remote: &str) -> Option<Vec<u8>> {
+    let cmd = format!("hexdump -v -e '16/1 \"%02x\" \"\\n\"' {remote}");
+    let out = tn.run_capture(&cmd, 8);
+    let hex: String = out
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && l.len() % 2 == 0 && l.chars().all(|c| c.is_ascii_hexdigit()))
+        .collect();
+    if hex.len() < 32 {
+        return None; // ملف فارغ أو فشل السحب
+    }
+    hex::decode(hex).ok()
+}
+
+/// دمج مقتطفات قاعدة البيانات المفكوكة في التقرير — يملأ الفراغات فقط
+fn merge_db_into_report(rep: &mut ZudzReport, ex: &zudz_db::ExtractedDb) {
+    // PPPoE من أول اتصال PPPoE في WAN
+    if rep.pppoe.username.is_empty() {
+        if let Some(w) = ex.wan.iter().find(|w| w.kind == "PPPoE") {
+            rep.pppoe.username = w.pppoe_user.clone();
+            rep.pppoe.password = w.pppoe_password.clone();
+            rep.pppoe.vlan = w.vlan.clone();
+        }
+    }
+    // VoIP من أول خط SIP
+    if rep.voip.sip_uri.is_empty() {
+        if let Some(v) = ex.voip.first() {
+            rep.voip.sip_uri = v.auth_user.clone();
+            rep.voip.phone_number = v.phone_number.clone();
+            rep.voip.password = v.auth_password.clone();
+            if rep.voip.registrar.is_empty() {
+                rep.voip.registrar = v.registrar.clone();
+            }
+        }
+    }
+    // WiFi الافتراضية: أول شبكة 2.4G وأول 5G بكلمة المرور
+    if rep.wifi_defaults.ssid_24g.is_empty() {
+        if let Some(w) = ex.wifi.iter().find(|w| w.ssid.contains("2.4") || w.ssid.contains("24G")) {
+            rep.wifi_defaults.ssid_24g = w.ssid.clone();
+            if rep.wifi_defaults.psk.is_empty() {
+                rep.wifi_defaults.psk = w.password.clone();
+            }
+        }
+    }
+    if rep.wifi_defaults.ssid_5g.is_empty() {
+        if let Some(w) = ex.wifi.iter().find(|w| w.ssid.contains("5G") || w.ssid.contains("5g")) {
+            rep.wifi_defaults.ssid_5g = w.ssid.clone();
+            if rep.wifi_defaults.psk.is_empty() {
+                rep.wifi_defaults.psk = w.password.clone();
+            }
+        }
+    }
+    // معلومات الجهاز الناقصة
+    if rep.device.model.is_empty() {
+        rep.device.model = ex.device.config_label.clone();
+    }
+}
+
 fn scrape_shm_sip(tn: &mut ZteTelnet) -> Result<Voip, ExtractError> {
     // ابحث عن PID عامل cspd
     let ps = tn.run_capture("ps", 3);
@@ -400,5 +491,41 @@ mod tests {
         assert_eq!(v.password, "46327985");
         assert_eq!(v.registrar, "voip.ims.algerietelecom.dz");
         assert_eq!(v.p_cscf, "p-cscf.ims.algerietelecom.dz");
+    }
+
+    #[test]
+    fn config_key_material_derivation() {
+        let mut rep = ZudzReport::default();
+        rep.gpon.sn8 = "AABBCCDD".into();
+        rep.device.base_mac = "14:ca:56:dd:73:a1".into();
+        assert_eq!(
+            config_key_material(&rep),
+            Some(("AABBCCDD".into(), "14:ca:56:dd:73:a1".into()))
+        );
+        // من full_sn عند غياب sn8 — آخر 8 محارف
+        rep.gpon.sn8.clear();
+        rep.gpon.full_sn = "ZTEGD900B5FB".into();
+        assert_eq!(config_key_material(&rep).unwrap().0, "D900B5FB");
+        // بلا MAC لا مفتاح
+        rep.device.base_mac.clear();
+        assert!(config_key_material(&rep).is_none());
+    }
+
+    #[test]
+    fn hexdump_filter_parsing() {
+        // مقتطف بأسلوب مخرجات hexdump فوق telnet مع ضوضاء صدى/موجه
+        let out = "hexdump -v -e '16/1 \"%02x\" \"\\n\"' /userconfig/cfg/db_user_cfg.xml\r\n\
+                   01020304e3020e00\r\n\
+                   5a5445254e2447\r\n\
+                   / # \r\n\
+                   garbage line!\r\n";
+        // نعيد استخدام منطق pull_file_hexdump يدوياً لأنه يقرأ من الجلسة
+        let hex: String = out
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && l.len() % 2 == 0 && l.chars().all(|c| c.is_ascii_hexdigit()))
+            .collect();
+        let bytes = hex::decode(hex).unwrap();
+        assert_eq!(bytes, [0x01, 0x02, 0x03, 0x04, 0xe3, 0x02, 0x0e, 0x00, 0x5a, 0x54, 0x45, 0x25, 0x4e, 0x24, 0x47]);
     }
 }

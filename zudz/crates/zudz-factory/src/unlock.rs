@@ -49,6 +49,8 @@ pub struct UnlockResult {
     pub aes_key: String,
     pub server_mac: String,
     pub raw: String,
+    /// هل منفذ telnet 23 مفتوح فعلاً بعد الفتح؟ (تشخيص موثوقية)
+    pub port_open: bool,
 }
 
 fn aes192_ecb_encrypt(key: &[u8; 24], data: &[u8]) -> Vec<u8> {
@@ -179,15 +181,110 @@ pub fn check_diagnostic_mac(host: &str) -> Result<(), FactoryError> {
 /// يطابق الأداة المرجعية المُتحقَّق منها فعلياً على الجهاز (تقرير 02_DEVICE_TEST):
 /// الحمولة تحمل DIAGNOSTIC_MAC دائماً — وهو شرط فتح telnet — بينما MAC كرت
 /// الشبكة الفعلي **لا يلزم تغييره** (الجهاز لا يطابقه مع مصدر الطلب).
+///
+/// الموثوقية (علاج الاستكشاف الرسمي §9 في الحزمة المرجعية):
+/// 1. تدوير المجمّعات: Python ← Go-new ← Go-old (عند قطع الاتصال عند SendInfo).
+/// 2. تدوير الإصدار: version50 ← version61 (عند فشل خطوة الدخول).
+/// 3. جولتان كاملتان بفاصل 1.5 ثانية.
+/// 4. بعد النجاح: فحص فتح المنفذ 23 — إن بقي مسدوداً يُعاد التفعيل مرة
+///    إضافية (يستيقظ telnetd أحياناً في الجولة التالية).
 pub fn unlock_telnet(host: &str, user: &str, password: &str) -> Result<UnlockResult, FactoryError> {
-    unlock_telnet_with_mac(host, user, password, &DIAGNOSTIC_MAC)
+    let combos: &[(&[u8; 96], ProtocolVersion)] = &[
+        (&crate::KEY_POOL, ProtocolVersion::V50),
+        (&crate::KEY_POOL, ProtocolVersion::V61),
+        (&crate::KEY_POOL_GO_NEW, ProtocolVersion::V50),
+        (&crate::KEY_POOL_GO_OLD, ProtocolVersion::V50),
+    ];
+    let mut last_err: Option<FactoryError> = None;
+    for round in 0..2 {
+        if round > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+        for (pool, ver) in combos {
+            match unlock_once(host, user, password, &DIAGNOSTIC_MAC, pool, *ver) {
+                Ok(mut r) => {
+                    // فحص فتح المنفذ — إن تأخر telnetd نعيد التفعيل مرة واحدة
+                    if !port_open(host, 2500) {
+                        if let Ok(r2) =
+                            unlock_once(host, user, password, &DIAGNOSTIC_MAC, pool, *ver)
+                        {
+                            r = r2;
+                        }
+                    }
+                    r.port_open = port_open(host, 1500);
+                    return Ok(r);
+                }
+                // خطأ شبكة (الجهاز غير قابل للوصول) — تدوير المجمّعات بلا جدوى
+                Err(e @ FactoryError::Http(_)) => return Err(e),
+                Err(e) => last_err = Some(e),
+            }
+        }
+    }
+    Err(last_err.unwrap_or(FactoryError::LocalMacNotFound))
 }
 
+/// هل منفذ telnet مفتوح على الجهاز؟ (فحص TCP قصير بلا اتصال فعلي)
+fn port_open(host: &str, timeout_ms: u64) -> bool {
+    use std::net::ToSocketAddrs;
+    let Ok(mut addrs) = (host, 23u16).to_socket_addrs() else { return false };
+    let Some(addr) = addrs.next() else { return false };
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(timeout_ms)).is_ok()
+}
+
+/// إصدار صيغة CheckLoginAuth — كلاهما مقبول على هذه العائلة
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolVersion {
+    /// `CheckLoginAuth.gch?version50&user=..&pass=..` (محرك Python)
+    V50,
+    /// `CheckLoginAuth.gch?&version61&user=..&pass=..` (محرك Go — لاحظ ?&)
+    V61,
+}
+
+impl ProtocolVersion {
+    fn login_payload(&self, user: &str, password: &str) -> String {
+        match self {
+            ProtocolVersion::V50 => {
+                format!("CheckLoginAuth.gch?version50&user={user}&pass={password}")
+            }
+            ProtocolVersion::V61 => {
+                format!("CheckLoginAuth.gch?&version61&user={user}&pass={password}")
+            }
+        }
+    }
+}
+
+/// الجسم البروتوكولي لمصافحة واحدة كاملة (الخطوات 0–5) بمجمّع وإصدار محددين.
+/// مفتاح الاشتقاق من المجمّع المعطى (وليس KEY_POOL العام).
 pub fn unlock_telnet_with_mac(
     host: &str,
     user: &str,
     password: &str,
     client_mac: &[u8; 6],
+) -> Result<UnlockResult, FactoryError> {
+    unlock_once(host, user, password, client_mac, &crate::KEY_POOL, ProtocolVersion::V50)
+}
+
+/// نسخة عامة للاختبارات من derive_key_from_pool
+pub fn derive_key_from_pool_pub(pool: &[u8; 96], server_rand: u64) -> ([u8; 24], u64) {
+    derive_key_from_pool(pool, server_rand)
+}
+
+fn derive_key_from_pool(pool: &[u8; 96], server_rand: u64) -> ([u8; 24], u64) {
+    let index = ((0u64 & crate::MASK) ^ server_rand) % 60;
+    let mut key = [0u8; 24];
+    for i in 0..24 {
+        key[i] = pool[index as usize + i] ^ 0xA5;
+    }
+    (key, index)
+}
+
+fn unlock_once(
+    host: &str,
+    user: &str,
+    password: &str,
+    client_mac: &[u8; 6],
+    pool: &[u8; 96],
+    ver: ProtocolVersion,
 ) -> Result<UnlockResult, FactoryError> {
     let mut s = RawHttp::new(host, 8);
 
@@ -220,8 +317,8 @@ pub fn unlock_telnet_with_mac(
     let server_mac_str = it.next().unwrap_or("");
     let server_mac: Vec<u8> = server_mac_str.chars().map(|c| c as u8).collect();
 
-    // STEP 3 — المفتاح والحمولة
-    let (key, _index) = crate::derive_aes_key(server_rand);
+    // STEP 3 — المفتاح والحمولة (من المجمّع المعطى)
+    let (key, _index) = derive_key_from_pool(pool, server_rand);
     let words = crate::payload_words(&server_mac, client_mac);
     let payload = crate::build_payload_str(&words);
     let enc = aes192_ecb_encrypt(&key, &latin1_bytes(&payload));
@@ -230,8 +327,8 @@ pub fn unlock_telnet_with_mac(
         return Err(FactoryError::Step { step: 3, expected: "200", got: r.status.to_string() });
     }
 
-    // STEP 4 — دخول ببيانات الواجهة
-    let auth = format!("CheckLoginAuth.gch?version50&user={user}&pass={password}");
+    // STEP 4 — دخول ببيانات الواجهة (بالصيغة المحددة للإصدار)
+    let auth = ver.login_payload(user, password);
     let enc = aes192_ecb_encrypt(&key, &latin1_bytes(&auth));
     let r = s.post_raw("/webFacEntry", &enc)?;
     if r.status != 200 {
@@ -263,6 +360,7 @@ pub fn unlock_telnet_with_mac(
         aes_key: hex::encode(key),
         server_mac: hex::encode(&server_mac),
         raw,
+        port_open: true,
     })
 }
 
