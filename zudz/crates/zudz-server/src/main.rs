@@ -55,9 +55,9 @@ fn valid_out_dir(s: &str) -> bool {
     !s.is_empty() && s.len() <= 200 && !s.contains('\0') && !s.split('/').any(|p| p == "..")
 }
 
-/// خيط الإعداد التلقائي للـ MAC: يفعّل العنوان التشخيصي على كرت الشبكة نحو
-/// الجهاز عند الحاجة — عبر عملية حارسة مرتفعة الصلاحيات (نافذة كلمة سر عند
-/// طلبها sudo) تعيد الأصلي تلقائياً متى أُغلق التطبيق أو انهار.
+/// يُحدّث حالة المسار التشخيصي للواجهة. المسار نفسه يُنشأ تلقائياً عند كل
+/// عملية داخل zudz-extract (واجهة macvlan مبنية بـ netlink مدمج) — هنا
+/// نعرض الحالة فقط، بلا أي مكوّن خارجي.
 fn mac_auto_setup(state: &Arc<State>) {
     let host = std::env::var("ZUDZ_HOST").unwrap_or_else(|_| "192.168.1.1".into());
     let set_status = |v: serde_json::Value| {
@@ -65,46 +65,7 @@ fn mac_auto_setup(state: &Arc<State>) {
             st.mac = v;
         }
     };
-
-    // الوضع الصحيح (تحقق ميداني 2026-10-12 على F6600P V9.0.10P25N1):
-    // الجهاز **يشترط** أن يأتي طلب الفتح من MAC التشخيصي 00:07:29:55:35:57،
-    // وإلا يكتمل البروتوكول ولا يُنشأ خادم telnet (المنفذ 23 يبقى مغلقاً).
-    // يُنشأ المسار التشخيصي تلقائياً عند كل عملية (macvlan عبر docker، أو ip
-    // إن كان root). ZUDZ_AUTO_MAC=1 يفعّل تغيير MAC الكرت الفعلي بدلاً من ذلك.
-    let enabled = std::env::var("ZUDZ_AUTO_MAC").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
-    if !enabled {
-        set_status(diag_status_json(&host));
-        return;
-    }
-
-    let (iface, mac) = match zudz_factory::nic_mac_towards(&host) {
-        Ok(Some(pair)) => pair,
-        _ => {
-            set_status(serde_json::json!({ "status": "skipped", "reason": "لا مسار شبكي نحو الجهاز — تعمل مسارات الويب وفك التشفير دون تغيير MAC" }));
-            return;
-        }
-    };
-    if mac == zudz_factory::DIAGNOSTIC_MAC {
-        set_status(serde_json::json!({ "status": "active", "iface": iface, "mode": "already-set", "note": "MAC التشخيصي مثبّت على الكرت بالفعل" }));
-        return;
-    }
-    let original = zudz_factory::mac_str(&mac);
-    println!("🛡️  MAC: تفعيل العنوان التشخيصي على {iface} (الأصلي {original} — يُسترجع تلقائياً عند الإغلاق)");
-    match zudz_factory::macctl::spawn_mac_watch(
-        std::process::id(),
-        &iface,
-        &original,
-        &zudz_factory::macctl::default_log_path(),
-    ) {
-        Ok(()) => set_status(serde_json::json!({
-            "status": "active", "iface": iface, "original": original,
-            "note": "MAC التشخيصي مفعّل مؤقتاً — يعود الأصلي تلقائياً عند إغلاق التطبيق"
-        })),
-        Err(e) => set_status(serde_json::json!({
-            "status": "failed", "iface": iface, "error": e,
-            "note": "عمليات telnet تحتاج MAC التشخيصي — راجع docs/set-diagnostic-mac.md"
-        })),
-    }
+    set_status(diag_status_json(&host));
 }
 
 /// حالة المسار التشخيصي (للواجهة والخادم): active | needs-setup | no-route
@@ -122,7 +83,7 @@ fn diag_status_json(host: &str) -> serde_json::Value {
             "status": "needs-setup", "mode": "route", "iface": iface,
             "current_mac": zudz_factory::mac_str(&mac),
             "required_mac": zudz_factory::DIAGNOSTIC_MAC_STR,
-            "note": "يُنشأ تلقائياً عند كل عملية (docker أو root)؛ أو zudz diag-route setup"
+            "note": "يُنشأ تلقائياً عند كل عملية (netlink مدمج — يحتاج root)؛ أو zudz diag-route setup"
         })
     } else {
         serde_json::json!({ "status": "no-route", "note": "لا مسار شبكي نحو الجهاز" })
@@ -285,16 +246,6 @@ fn serve_static(mut req: tiny_http::Request, dist: &Path, url: &str) {
 }
 
 fn main() {
-    // وضع العملية الحارسة: zudz-server --mac-watch <parent_pid> <iface> <orig_mac>
-    // (تُطلق مرتفعة الصلاحيات من الخادم الرئيسي — تدير دورة MAC كاملة ثم تخرج)
-    let argv: Vec<String> = std::env::args().collect();
-    if let Some(i) = argv.iter().position(|a| a == "--mac-watch") {
-        let pid: u32 = argv.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(0);
-        let iface = argv.get(i + 2).cloned().unwrap_or_default();
-        let orig = argv.get(i + 3).cloned().unwrap_or_default();
-        std::process::exit(zudz_factory::macctl::mac_watch_main(pid, &iface, &orig));
-    }
-
     let port: u16 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(8790);
     let dist = std::env::args()
         .nth(2)

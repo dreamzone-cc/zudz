@@ -51,14 +51,33 @@ if pgrep -x zudz-server >/dev/null 2>&1; then
 fi
 
 # ---------- 4) تشغيل الخادم وفتح المتصفح ----------
+# عمليات telnet تحتاج CAP_NET_ADMIN (root) لإنشاء واجهة macvlan عبر netlink
+# المدمج. نرفع صلاحية الخادم عند الإمكان (pkexec بواجهة رسومية، أو sudo)،
+# مع الرجوع للتشغيل العادي إن تعذّر الرفع (تعمل عندها مسارات الويب/فك التشفير).
 notify "ZUDZ" "جاري التشغيل… / Starting…"
-( cd "$WS" && nohup "$BIN" "$PORT" app/build </dev/null >> "$LOG" 2>&1 & )
+
+start_server() {
+    ( cd "$WS" && nohup "$@" </dev/null >> "$LOG" 2>&1 & )
+}
+wait_ready() {
+    for _ in $(seq 1 30); do
+        curl -sf -o /dev/null "$URL" 2>/dev/null && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+if [ "$(id -u)" = "0" ]; then
+    start_server "$BIN" "$PORT" app/build
+elif command -v pkexec >/dev/null 2>&1; then
+    start_server pkexec "$BIN" "$PORT" app/build
+    wait_ready || { pkill -x zudz-server 2>/dev/null; start_server "$BIN" "$PORT" app/build; }
+else
+    start_server "$BIN" "$PORT" app/build
+fi
 
 # انتظار جاهزية الخادم (حتى 15 ثانية)
-for _ in $(seq 1 30); do
-    curl -sf -o /dev/null "$URL" 2>/dev/null && break
-    sleep 0.5
-done
+wait_ready
 
 if curl -sf -o /dev/null "$URL" 2>/dev/null; then
     notify "ZUDZ" "الأداة جاهزة — يجري فتح المتصفح / Ready — opening browser"

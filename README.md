@@ -79,9 +79,10 @@ cd .. && ./target/release/zudz-server 8790 app/build   # run
 
 ### Requirements
 
-- [Rust](https://rustup.rs) (core) and [Bun](https://bun.sh) (UI) — needed on first run only
-- Linux (tested on CachyOS/Arch); the UI runs in any modern browser
-- **Telnet-based operations** work out of the box: the factory payload automatically carries the required diagnostic MAC, and login falls back to the stored permanent credentials if the temp session is refused. On strict firmware builds that also verify the physical NIC MAC, run the app with `ZUDZ_AUTO_MAC=1` (temporary MAC change with a dedicated password dialog, original restored on exit) — see [docs/set-diagnostic-mac.md](docs/set-diagnostic-mac.md). Web scraping and config decryption never need any of this.
+- **Prebuilt release** (`zudz-vX.Y.Z-linux-x86_64.tar.gz`): **nothing to install** — the bundle ships **statically-linked** binaries (musl, no libc/dependency) plus the prebuilt UI. Just run `./run-zudz.sh`.
+- **From source only**: [Rust](https://rustup.rs) (core) and [Bun](https://bun.sh) (UI) — needed on first run.
+- Linux (tested on CachyOS/Arch); the UI runs in any modern browser.
+- **Telnet-based operations need root** (`CAP_NET_ADMIN`): the device only accepts the telnet connection when it originates from the diagnostic MAC `00:07:29:55:35:57`, and ZUDZ brings up a temporary `macvlan` interface for that **directly through the Linux netlink API — no `docker`, no `iproute2`, no external component of any kind**. Run the launcher/CLI as root (the launcher elevates via `pkexec`/`sudo`). Web scraping and config decryption never need any privilege — see [docs/set-diagnostic-mac.md](docs/set-diagnostic-mac.md).
 
 ## <img src="docs/icons/package.svg" width="20" align="top" alt=""> Project layout
 

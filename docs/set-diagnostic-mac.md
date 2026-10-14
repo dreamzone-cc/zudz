@@ -4,17 +4,17 @@ ZTE ONT devices accept the factory-mode challenge payload only when it carries t
 
 Field testing (2026-10-12, F6600P V9.0.10P25N1) showed the device **additionally requires the physical source MAC of the TCP connection to be that same address** — and not only for the factory handshake: the **telnet login itself is refused** when the connection does not originate from `00:07:29:55:35:57`. With any other NIC MAC the factory handshake still completes (and returns temporary credentials) but the telnet daemon never spawns / login is denied.
 
-**ZUDZ handles this automatically since v0.5.1**: for each operation it brings up a temporary `macvlan` interface carrying `00:07:29:55:35:57`, routes the device traffic through it **for the whole session** (factory unlock *and* telnet), then removes it — your real NIC is never touched. This needs either **docker** (used without root) or **root**. If neither is available, set the NIC MAC manually as below, or run with `ZUDZ_AUTO_MAC=1` to have ZUDZ change it temporarily and restore it on exit.
+**ZUDZ handles this automatically since v0.5.1**: for each operation it brings up a temporary `macvlan` interface carrying `00:07:29:55:35:57`, routes the device traffic through it **for the whole session** (factory unlock *and* telnet), then removes it — your real NIC is never touched. The interface is created **directly through the Linux netlink API**, so ZUDZ needs **no external tools at all** (no `docker`, no `iproute2`) — only the **`CAP_NET_ADMIN`** capability, i.e. run it as **root** (`sudo`). If you cannot run as root, set the NIC MAC manually as below.
 
 ## Automatic (ZUDZ ≥ 0.5.1) — recommended
 
 ```bash
 zudz diag-route status   # is the diagnostic route active?
-zudz diag-route setup    # create it (docker or root) and leave it — for manual telnet
+zudz diag-route setup    # create it (needs root) and leave it — for manual telnet
 zudz diag-route remove   # remove it
 ```
 
-ZUDZ's own commands (`unlock`, `extract-all`, `gpon-read/write`, `region-*`) create the route **automatically for each operation and keep it alive for the whole telnet session**, removing it afterwards. The web UI shows the status in the Decrypt tab via the **"Check diagnostic MAC"** button.
+ZUDZ's own commands (`unlock`, `extract-all`, `gpon-read/write`, `region-*`) create the route **automatically for each operation and keep it alive for the whole telnet session**, removing it afterwards. The one-click launcher tries to elevate the server through `pkexec`/`sudo`. The web UI shows the status in the Decrypt tab via the **"Check diagnostic MAC"** button.
 
 ## Manual fallback — change the NIC MAC yourself
 

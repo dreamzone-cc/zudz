@@ -606,7 +606,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zudz-cli"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "clap",
  "hex",
@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "zudz-crypto"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "aes",
  "flate2",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "zudz-db"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "roxmltree",
  "serde",
@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "zudz-extract"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "hex",
  "regex",
@@ -664,10 +664,11 @@ dependencies = [
 
 [[package]]
 name = "zudz-factory"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "aes",
  "hex",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
@@ -677,18 +678,18 @@ dependencies = [
 
 [[package]]
 name = "zudz-gpon"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "zudz-meta"
-version = "0.5.1"
+version = "0.5.2"
 
 [[package]]
 name = "zudz-region"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -702,7 +703,7 @@ dependencies = [
 
 [[package]]
 name = "zudz-server"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -717,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "zudz-telnet"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "hex",
  "thiserror",
@@ -726,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "zudz-web"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "serde",
  "sha2",

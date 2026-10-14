@@ -3,7 +3,6 @@
 use crate::http::{HttpError, RawHttp};
 use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 use aes::Aes192;
-use std::process::Command;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FactoryError {
@@ -17,6 +16,8 @@ pub enum FactoryError {
     NoTelnetCreds(String),
     #[error("لم يُعثر على ماك بطاقة شبكة")]
     LocalMacNotFound,
+    #[error(transparent)]
+    Nl(#[from] crate::netlink::NlError),
     #[error(
         "بوابة MAC: كرت الشبكة الموصل للجهاز هو «{iface}» وماكه {current} \
          — الجهاز لا يفتح telnet إلا إذا كان ماك الكرت {required} \
@@ -77,41 +78,9 @@ fn aes192_ecb_decrypt(key: &[u8; 24], data: &[u8]) -> Vec<u8> {
     out
 }
 
-/// ماك الكرت الموصل بالجهاز (الاكتشاف الحاسم: يُضمَّن في الحمولة بدل السحري)
+/// أول ماك كرت فيزيائي حقيقي (عبر netlink — بلا `iproute2`)
 pub fn get_local_mac() -> Result<[u8; 6], FactoryError> {
-    // جرّب الأجهزة السلكية أولاً ثم أي جهاز فيه مسار للشبكة
-    let out = Command::new("ip")
-        .args(["-o", "link", "show"])
-        .output()
-        .map_err(|_| FactoryError::LocalMacNotFound)?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut best: Option<[u8; 6]> = None;
-    for line in text.lines() {
-        let Some(pos) = line.find("ether ") else { continue };
-        let mac_str = line[pos + 6..].split_whitespace().next().unwrap_or("").trim();
-        let clean: String = mac_str.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-        if clean.len() == 12 {
-            let mut mac = [0u8; 6];
-            let mut ok = true;
-            for i in 0..6 {
-                mac[i] = u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).unwrap_or_else(|_| {
-                    ok = false;
-                    0
-                });
-            }
-            if ok && mac != [0; 6] {
-                // فضّل غير loopback والماكات الحقيقية (أول 3 بايتات OUI غير صفرية)
-                let is_virtual = mac[0] == 0x02 && mac[1] == 0x00; // بعض الوهمية
-                if best.is_none() || !is_virtual {
-                    best = Some(mac);
-                    if !is_virtual && mac[0] != 0 {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    best.ok_or(FactoryError::LocalMacNotFound)
+    crate::netlink::first_physical_mac().ok_or(FactoryError::LocalMacNotFound)
 }
 
 // ─── بوابة MAC التشخيصي ────────────────────────────────────────────────
@@ -143,22 +112,19 @@ pub fn parse_link_mac(link_out: &str) -> Option<[u8; 6]> {
     Some(mac)
 }
 
-/// ماك كرت الشبكة الموصل فعلياً نحو المضيف (عبر جدول التوجيه)
+/// (اسم واجهة الخروج نحو المضيف، ماكها) — عبر netlink (بلا `iproute2`)
 pub fn nic_mac_towards(host: &str) -> Result<Option<(String, [u8; 6])>, FactoryError> {
-    let out = Command::new("ip")
-        .args(["route", "get", host])
-        .output()
-        .map_err(FactoryError::Io)?;
-    let route = String::from_utf8_lossy(&out.stdout);
-    let Some(dev) = parse_route_dev(&route) else {
+    let Ok(ip) = host.parse::<std::net::Ipv4Addr>() else {
         return Ok(None);
     };
-    let out = Command::new("ip")
-        .args(["-o", "link", "show", "dev", &dev])
-        .output()
-        .map_err(FactoryError::Io)?;
-    let link = String::from_utf8_lossy(&out.stdout);
-    Ok(parse_link_mac(&link).map(|mac| (dev, mac)))
+    let Some(route) = crate::netlink::route_lookup(ip)? else {
+        return Ok(None);
+    };
+    let links = crate::netlink::links()?;
+    Ok(links
+        .into_iter()
+        .find(|l| l.index == route.ifindex)
+        .and_then(|l| l.mac.map(|m| (l.name, m))))
 }
 
 /// فحص إلزامي قبل الفتح: ماك كرت الشبكة نحو الجهاز يجب أن يساوي DIAGNOSTIC_MAC.
