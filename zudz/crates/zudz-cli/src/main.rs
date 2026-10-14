@@ -36,6 +36,12 @@ enum Cmd {
         #[arg(long, default_value = "admin")] user: String,
         #[arg(long, default_value = "admin")] password: String,
     },
+    /// إدارة مسار MAC التشخيصي (الجهاز يفتح telnet فقط من 00:07:29:55:35:57)
+    DiagRoute {
+        /// setup | remove | status
+        action: String,
+        #[arg(long, default_value = "192.168.1.1")] host: String,
+    },
     /// تحليل مخرجات setmac show2
     TagParams { file: String },
     /// الاستخراج الموحد من الجهاز الحي (مصنع + telnet + pppd + ذاكرة cspd + ويب)
@@ -45,6 +51,8 @@ enum Cmd {
         #[arg(long, default_value = "admin")] password: String,
         #[arg(long)] out: Option<String>,
         #[arg(long, default_value = "true")] with_web: bool,
+        /// لا تُثبّت telnet الدائم (CloseServerTime/ExitTime) بعد الفتح
+        #[arg(long, default_value = "false")] no_perm_telnet: bool,
     },
     /// جدول مناطق ZTE (sdefconf)
     RegionList,
@@ -113,17 +121,8 @@ fn main() {
                 1
             }
         },
-        Cmd::Unlock { host, user, password } => match zudz_factory::unlock_telnet(&host, &user, &password) {
-            Ok(r) => {
-                println!("✅ factory mode — telnet: {} / {}", r.telnet_user, r.telnet_pass);
-                println!("   aes_key={} server_mac={}", r.aes_key, r.server_mac);
-                0
-            }
-            Err(e) => {
-                eprintln!("❌ {e}");
-                1
-            }
-        },
+        Cmd::Unlock { host, user, password } => cmd_unlock(&host, &user, &password),
+        Cmd::DiagRoute { action, host } => cmd_diag_route(&action, &host),
         Cmd::TagParams { file } => match std::fs::read_to_string(&file) {
             Ok(text) => {
                 let parsed = zudz_gpon::parse_show2(&text);
@@ -137,7 +136,8 @@ fn main() {
                 1
             }
         },
-        Cmd::ExtractAll { host, user, password, out, with_web } => cmd_extract_all(&host, &user, &password, out, with_web),
+        Cmd::ExtractAll { host, user, password, out, with_web, no_perm_telnet } =>
+            cmd_extract_all(&host, &user, &password, out, with_web, no_perm_telnet),
         Cmd::RegionList => {
             println!("{:>5} | {:<34} | {:<6} | source", "code", "region", "tested");
             for r in zudz_region::REGIONS {
@@ -161,12 +161,88 @@ fn main() {
     std::process::exit(rc);
 }
 
-fn cmd_extract_all(host: &str, user: &str, password: &str, out: Option<String>, with_web: bool) -> i32 {
+/// فتح telnet عبر وضع المصنع — مع توجيه MAC التشخيصي وفحص المنفذ وتخزين الجلسة.
+fn cmd_unlock(host: &str, user: &str, password: &str) -> i32 {
+    // توجيه عبر MAC التشخيصي — يبقى فعّالاً حتى تستطيع telnet بنفسك
+    match zudz_factory::diagmac::setup_diag_route(host) {
+        Ok(mode) => println!("🔌 مسار MAC التشخيصي فعّال: {mode}"),
+        Err(e) => eprintln!("⚠️  {e} — سأحاول الفتح مباشرة (قد لا يُنشأ telnetd)"),
+    }
+    match zudz_factory::unlock_telnet(host, user, password) {
+        Ok(r) => {
+            println!("✅ factory mode — telnet: {} / {}", r.telnet_user, r.telnet_pass);
+            println!("   aes_key={} server_mac={}", r.aes_key, r.server_mac);
+            let _ = zudz_factory::session::save_session(host, &r.telnet_user, &r.telnet_pass);
+            if zudz_factory::session::wait_port_open(host, 8000) {
+                println!("   المنفذ 23 مفتوح ✅ (خُزّنت الجلسة — يمكن للعمليات التالية إعادة استخدامها)");
+                0
+            } else {
+                eprintln!(
+                    "⚠️  المنفذ 23 مغلق — الجهاز يشترط أن يأتي الطلب من MAC التشخيصي {}. \
+                     فعّله بـ: zudz diag-route setup",
+                    zudz_factory::DIAGNOSTIC_MAC_STR
+                );
+                1
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ {e}");
+            1
+        }
+    }
+}
+
+/// إدارة مسار MAC التشخيصي (setup | remove | status).
+fn cmd_diag_route(action: &str, host: &str) -> i32 {
+    match action {
+        "setup" => match zudz_factory::diagmac::setup_diag_route(host) {
+            Ok(mode) => {
+                println!("✅ مسار MAC التشخيصي فعّال ({mode})");
+                println!("   المنفذ 23 الآن: {}", if zudz_factory::session::port_open(host, 1200) { "مفتوح" } else { "مغلق (افتح المصنع: zudz unlock)" });
+                0
+            }
+            Err(e) => {
+                eprintln!("❌ {e}");
+                1
+            }
+        },
+        "remove" => {
+            zudz_factory::diagmac::remove_diag_route(host);
+            println!("✅ أُزيل مسار MAC التشخيصي");
+            0
+        }
+        "status" => {
+            if zudz_factory::diagmac::nic_is_diagnostic(host) {
+                println!("✅ كرت الشبكة الموصل للجهاز يحمل MAC التشخيصي أصلاً");
+            } else if zudz_factory::diagmac::diag_route_active(host) {
+                println!("✅ مسار MAC التشخيصي نشط");
+            } else if let Ok(Some((dev, mac))) = zudz_factory::nic_mac_towards(host) {
+                println!(
+                    "❌ لا مسار تشخيصي — كرت {dev} ماكه {} (ليس {}). \
+                     فعّله بـ: zudz diag-route setup",
+                    zudz_factory::mac_str(&mac),
+                    zudz_factory::DIAGNOSTIC_MAC_STR
+                );
+            } else {
+                println!("❌ لا مسار شبكي إلى {host}");
+            }
+            println!("   المنفذ 23: {}", if zudz_factory::session::port_open(host, 1200) { "مفتوح" } else { "مغلق" });
+            0
+        }
+        _ => {
+            eprintln!("❌ استخدم: zudz diag-route <setup|remove|status> [--host H]");
+            1
+        }
+    }
+}
+
+fn cmd_extract_all(host: &str, user: &str, password: &str, out: Option<String>, with_web: bool, no_perm_telnet: bool) -> i32 {
     let opts = zudz_extract::ExtractOptions {
         host: host.to_string(),
         web_user: user.to_string(),
         web_password: password.to_string(),
         with_web,
+        with_perm_telnet: !no_perm_telnet,
     };
     println!("🔎 ZUDZ extract-all → {host} (مسارات: tagparams + pppd + cspd-shm{}{})",
         if with_web { " + web" } else { "" }, "");
@@ -196,7 +272,7 @@ fn cmd_extract_all(host: &str, user: &str, password: &str, out: Option<String>, 
 fn cmd_region_prepare(host: &str, user: &str, password: &str, out: &str) -> i32 {
     println!("⛔ بوابة الأمان: سحب كامل إلزامي قبل تغيير المنطقة (لأن sdefconf يمسح إعدادات المزود)…");
     let opts = zudz_extract::ExtractOptions {
-        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: true,
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: true, with_perm_telnet: true,
     };
     match zudz_region::prepare_region_change(&opts, std::path::Path::new(out)) {
         Ok(p) => {
@@ -230,7 +306,7 @@ fn cmd_region_change(host: &str, user: &str, password: &str, code: u32, ack: &st
         println!("🛡️  لا توكن — سيُسحب احتياطياً كاملاً تلقائياً قبل التنفيذ (الإلغاء تلقائي إن فشل السحب)");
     }
     let opts = zudz_extract::ExtractOptions {
-        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false, with_perm_telnet: true,
     };
     match zudz_region::change_region(&opts, code, ack, std::path::Path::new(out), force_unknown, perm_telnet) {
         Ok(res) => {
@@ -251,7 +327,7 @@ fn cmd_region_change(host: &str, user: &str, password: &str, code: u32, ack: &st
 
 fn cmd_gpon_read(host: &str, user: &str, password: &str) -> i32 {
     let opts = zudz_extract::ExtractOptions {
-        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false, with_perm_telnet: true,
     };
     match zudz_region::gpon_read(&opts) {
         Ok(tp) => {
@@ -269,7 +345,7 @@ fn cmd_gpon_clone(host: &str, user: &str, password: &str, report: &str, out: &st
     println!("🧬 استنساخ هوية GPON من {report} → {host}");
     println!("🛡️  ستُسحب نسخة تلقائية لهوية الجهاز الهدف الحالية إلى {out} قبل الكتابة");
     let opts = zudz_extract::ExtractOptions {
-        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false, with_perm_telnet: true,
     };
     match zudz_region::gpon_clone_from_report(&opts, std::path::Path::new(report), std::path::Path::new(out)) {
         Ok(res) => {
@@ -289,7 +365,7 @@ fn cmd_gpon_clone(host: &str, user: &str, password: &str, report: &str, out: &st
 fn cmd_gpon_write(host: &str, user: &str, password: &str, vid: &str, sn8: &str, ploam: &str, out: &str) -> i32 {
     println!("🛡️  ستُسحب نسخة تلقائية لهوية الجهاز الحالية إلى {out} قبل الكتابة");
     let opts = zudz_extract::ExtractOptions {
-        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false,
+        host: host.into(), web_user: user.into(), web_password: password.into(), with_web: false, with_perm_telnet: true,
     };
     match zudz_region::gpon_write(&opts, vid, sn8, ploam, std::path::Path::new(out)) {
         Ok(res) => {

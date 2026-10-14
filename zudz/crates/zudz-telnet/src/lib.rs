@@ -207,6 +207,28 @@ impl ZteTelnet {
     }
 }
 
+/// أوامر تمديد عمر خادم telnet المؤقت (من التعليمات المجربة ميدانياً على
+/// F6600P): تزيد `CloseServerTime`/`ExitTime` وحد الاتصالات — ليبقى خادم
+/// telnet المصنع عاملاً بعد انتهاء الجلسة فتُعيد العمليات التالية استخدامه.
+///
+/// **لا تشمل `Lan_Enable`/`TS_*`**: تلك تُفعّل خادماً **دائماً** منفصلاً
+/// (يعمل بعد الإقلاع) ببيانات لا تقبلها الأداة، فيحجب الفتح الجديد
+/// (لا يستطيع استبدال خادم عامل) — وهو ما كسر إعادة الاستخدام ميدانياً.
+pub const PERM_TELNET_COMMANDS: &[&str] = &[
+    "sendcmd 1 DB set TelnetCfg 0 Max_Con_Num 99",
+    "sendcmd 1 DB set TelnetCfg 0 ExitTime 999999",
+    "sendcmd 1 DB set TelnetCfg 0 InitSecLvl 3",
+    "sendcmd 1 DB set TelnetCfg 0 CloseServerTime 9999999",
+    "sendcmd 1 DB save",
+];
+
+/// يطبّق تثبيت telnet الدائم على جلسة مفتوحة (يتجاهل أخطاء الأوامر).
+pub fn apply_perm_telnet(tn: &mut ZteTelnet) {
+    for cmd in PERM_TELNET_COMMANDS {
+        let _ = tn.run_capture(cmd, 2);
+    }
+}
+
 fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }

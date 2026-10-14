@@ -74,12 +74,16 @@ pub struct WifiDefaults {
     pub psk: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct ExtractOptions {
     pub host: String,
     pub web_user: String,
     pub web_password: String,
     /// سحب ويب LUA (إثرائي — يتجاهل الفشل)
     pub with_web: bool,
+    /// تثبيت telnet الدائم بعد الفتح (افتراضي: نعم) — يبقي الجلسة
+    /// مفتوحة بين عمليات الأداة (يزيد CloseServerTime/ExitTime).
+    pub with_perm_telnet: bool,
 }
 
 impl Default for ExtractOptions {
@@ -89,15 +93,20 @@ impl Default for ExtractOptions {
             web_user: "admin".into(),
             web_password: "admin".into(),
             with_web: true,
+            with_perm_telnet: true,
         }
     }
 }
 
-/// سلسلة محاولات دخول telnet: المؤقتة من الفتح أولاً، ثم root الدائم
-/// (ZTE + PLOAM من آخر تقرير محفوظ) — بعض البرمجيات تُبقي خادم telnet
-/// عالقاً على بيانات أول جلسة فتُرفض المؤقتة الجديدة.
-pub fn telnet_attempts(r: &zudz_factory::UnlockResult) -> Vec<(String, String)> {
-    let mut v = vec![(r.telnet_user.clone(), r.telnet_pass.clone())];
+/// سلسلة محاولات دخول telnet لبيانات مؤقتة معطاة: المؤقتة أولاً، ثم
+/// root الدائم (ZTE + PLOAM من آخر تقرير أو ZUDZ_TELNET_ROOT_PWD)، ثم
+/// admin/admin (telnet الدائم الافتراضي من التعليمات) — بعض البرمجيات
+/// تُبقي خادم telnet عالقاً على بيانات أول جلسة فتُرفض المؤقتة الجديدة.
+pub fn telnet_attempts_for(temp_user: &str, temp_pass: &str) -> Vec<(String, String)> {
+    let mut v = Vec::new();
+    if !temp_user.is_empty() {
+        v.push((temp_user.to_string(), temp_pass.to_string()));
+    }
     if let Ok(pw) = std::env::var("ZUDZ_TELNET_ROOT_PWD") {
         if !pw.is_empty() {
             v.push(("root".into(), pw));
@@ -116,7 +125,98 @@ pub fn telnet_attempts(r: &zudz_factory::UnlockResult) -> Vec<(String, String)> 
             }
         }
     }
+    // telnet الدائم الافتراضي (TS_UName/TS_UPwd من التعليمات)
+    v.push(("admin".into(), "admin".into()));
     v
+}
+
+/// تحتفظ بالتوافق مع نداءات سابقة: من نتيجة الفتح.
+pub fn telnet_attempts(r: &zudz_factory::UnlockResult) -> Vec<(String, String)> {
+    telnet_attempts_for(&r.telnet_user, &r.telnet_pass)
+}
+
+/// نتيجة فتح جلسة telnet مع الجهاز — المسار الموحّد لكل العمليات.
+pub struct DeviceTelnet {
+    pub telnet: ZteTelnet,
+    /// بيانات الدخول المؤقتة المستخدمة في الجلسة
+    pub temp_user: String,
+    pub temp_pass: String,
+    /// هل أُعيد استخدام جلسة عاملة (بدون فتح مصنع جديد)؟
+    pub reused: bool,
+    /// يبقي مسار MAC التشخيصي حياً خلال الجلسة كلها — الجهاز يشترط
+    /// أن يأتي اتصال telnet نفسه من العنوان التشخيصي (لا الفتح فقط).
+    _diag: Option<zudz_factory::DiagRoute>,
+}
+
+/// يفتح جلسة telnet مع الجهاز — **المسار الموحّد** الذي تستخدمه كل
+/// العمليات (استخراج، قراءة/كتابة GPON، تغيير منطقة).
+///
+/// الجهاز يشترط أن يأتي **اتصال telnet نفسه** من العنوان التشخيصي
+/// `00:07:29:55:35:57` (وإلا يُرفض الدخول)، فنبقي مسار macvlan التشخيصي
+/// حياً خلال الجلسة كلها.
+///
+/// ① إن كان خادم telnet عاملاً → إعادة استخدام بيانات الجلسة المخزّنة
+///    (فتح مصنع جديد لا يستبدل خادماً عاملاً).
+/// ② وإلا → فتح مصنع جديد، تخزين البيانات، ثم تثبيت البقاء الدائم في النهاية.
+pub fn open_device_telnet(opts: &ExtractOptions) -> Result<DeviceTelnet, ExtractError> {
+    // مسار MAC التشخيصي — يبقى حياً حتى إغلاق الجلسة
+    let diag = match zudz_factory::diagmac::ensure_diag_route(&opts.host) {
+        Ok(g) => Some(g),
+        Err(e) => {
+            eprintln!("⚠️  {e} — سأحاول مباشرة (قد لا يُنشأ telnetd وقد يُرفض الدخول)");
+            None
+        }
+    };
+
+    // ① إعادة استخدام جلسة عاملة (خادم telnet دائم أو جلسة سابقة)
+    if zudz_factory::session::port_open(&opts.host, 1200) {
+        let cached = zudz_factory::session::load_session(&opts.host);
+        let (cu, cp) = match &cached {
+            Some((u, p)) => (u.clone(), p.clone()),
+            None => (String::new(), String::new()),
+        };
+        if let Ok(mut tn) = ZteTelnet::connect_retry(&opts.host, 23, 4, 6, 1200) {
+            if tn.login_fallback(&telnet_attempts_for(&cu, &cp)).is_ok() {
+                let _ = tn.run_capture("", 2);
+                return Ok(DeviceTelnet { telnet: tn, temp_user: cu, temp_pass: cp, reused: true, _diag: diag });
+            }
+        }
+        // تعذّرت إعادة الاستخدام — نتابع إلى فتح مصنع جديد (الجهاز يُهيّئ
+        // telnetd لبيانات كل فتح جديد).
+    }
+
+    // ② فتح مصنع جديد — عبر MAC التشخيصي
+    let r = zudz_factory::unlock_telnet_quiet(&opts.host, &opts.web_user, &opts.web_password)
+        .map_err(|e| ExtractError::Unlock(e.to_string()))?;
+    // تحقق: هل أُنشئ الخادم فعلاً؟ (الجهاز يشترط MAC التشخيصي للمصدر)
+    if !zudz_factory::session::wait_port_open(&opts.host, 8000) {
+        zudz_factory::session::clear_session(&opts.host);
+        return Err(ExtractError::Unlock(format!(
+            "بروتوكول المصنع اكتمل لكن المنفذ 23 لم يُفتح — الجهاز يشترط أن يأتي \
+             الطلب من MAC التشخيصي {}. فعّله بـ: zudz diag-route setup \
+             (يحتاج docker أو root) أو غيّر MAC كرت الشبكة يدوياً.",
+            zudz_factory::DIAGNOSTIC_MAC_STR
+        )));
+    }
+    let _ = zudz_factory::session::save_session(&opts.host, &r.telnet_user, &r.telnet_pass);
+
+    let mut tn = ZteTelnet::connect_retry(&opts.host, 23, 4, 6, 1200)
+        .map_err(|e| ExtractError::Telnet(e.to_string()))?;
+    tn.login_fallback(&telnet_attempts(&r))
+        .map_err(|e| ExtractError::Telnet(e.to_string()))?;
+    let _ = tn.run_capture("", 2);
+
+    Ok(DeviceTelnet { telnet: tn, temp_user: r.telnet_user, temp_pass: r.telnet_pass, reused: false, _diag: diag })
+}
+
+/// يطبّق تثبيت telnet الدائم **بعد** انتهاء العمل — يزيد مدة بقاء خادم
+/// telnet المؤقت ليبقى عاملاً لعمليات الأداة التالية (إعادة الاستخدام).
+/// يُطبَّق في النهاية لأن أوامر TelnetCfg/DB save تُعيد تشغيل الخادم
+/// فتقطع الجلسة الحالية (لو طُبّقت قبل السحب لفقدت الجلسة مخرجاتها).
+pub fn finalize_telnet(dt: &mut DeviceTelnet, with_perm_telnet: bool) {
+    if with_perm_telnet && !dt.reused {
+        zudz_telnet::apply_perm_telnet(&mut dt.telnet);
+    }
 }
 
 /// الاستخراج الكامل عبر telnet (بعد فتح المصنع تلقائياً)
@@ -131,15 +231,12 @@ pub fn extract_all_with_progress(
     progress: &(dyn Fn(&str) + Send),
 ) -> Result<ZudzReport, ExtractError> {
     progress("unlock");
-    let r = zudz_factory::unlock_telnet(&opts.host, &opts.web_user, &opts.web_password)
-        .map_err(|e| ExtractError::Unlock(e.to_string()))?;
+    let mut dt = open_device_telnet(opts)?;
     progress("telnet");
-    let mut tn = ZteTelnet::connect_retry(&opts.host, 23, 4, 6, 1200)
-        .map_err(|e| ExtractError::Telnet(e.to_string()))?;
-    tn.login_fallback(&telnet_attempts(&r))
-        .map_err(|e| ExtractError::Telnet(e.to_string()))?;
-    let report = extract_with_telnet_progress(&mut tn, opts, progress)?;
-    tn.sendline("exit");
+    let report = extract_with_telnet_progress(&mut dt.telnet, opts, progress)?;
+    // تثبيت البقاء الدائم بعد السحب — يبقي الخادم عاملاً للمرة القادمة
+    finalize_telnet(&mut dt, opts.with_perm_telnet);
+    dt.telnet.sendline("exit");
     progress("report");
     Ok(report)
 }

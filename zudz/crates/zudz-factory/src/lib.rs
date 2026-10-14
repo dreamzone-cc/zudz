@@ -9,10 +9,20 @@
 pub mod http;
 pub mod macctl;
 pub mod unlock;
+pub mod diagmac;
+pub mod session;
 
 pub use unlock::{
     check_diagnostic_mac, get_local_mac, mac_str, nic_mac_towards, unlock_telnet,
-    unlock_telnet_with_mac, FactoryError, UnlockResult, DIAGNOSTIC_MAC, DIAGNOSTIC_MAC_STR,
+    unlock_telnet_quiet, unlock_telnet_with_mac, FactoryError, UnlockResult, DIAGNOSTIC_MAC,
+    DIAGNOSTIC_MAC_STR,
+};
+pub use diagmac::{
+    ensure_diag_route, setup_diag_route, remove_diag_route, diag_route_active,
+    nic_is_diagnostic, DiagError, DiagMode, DiagRoute, DIAG_MAC, DIAG_IFACE,
+};
+pub use session::{
+    port_open, wait_port_open, save_session, load_session, clear_session, session_path,
 };
 
 pub const FACTORY_USER: &str = "factorymode";

@@ -1,8 +1,22 @@
-# The diagnostic MAC address (when your firmware requires it)
+# The diagnostic MAC address (required by the device)
 
-ZTE ONT devices accept the factory-mode challenge payload only when it carries the diagnostic address `00:07:29:55:35:57` — **ZUDZ embeds it in the payload automatically** (since v0.3.0), which is all most firmwares need.
+ZTE ONT devices accept the factory-mode challenge payload only when it carries the diagnostic address `00:07:29:55:35:57` — **ZUDZ embeds it in the payload automatically**.
 
-On a few firmware builds the device additionally verifies the **physical NIC MAC** of the connecting machine against that address and filters port 23. Field tests on an F6600P (V9.0.10P25N1) showed the physical change is **not** required — payload-only works. If your device opens the factory handshake but telnet never appears (or drops SYNs), your firmware is one of the strict ones: set the NIC MAC as below, or run the app with `ZUDZ_AUTO_MAC=1` to have ZUDZ change it temporarily for the session and restore it automatically on exit.
+Field testing (2026-10-12, F6600P V9.0.10P25N1) showed the device **additionally requires the physical source MAC of the TCP connection to be that same address** — and not only for the factory handshake: the **telnet login itself is refused** when the connection does not originate from `00:07:29:55:35:57`. With any other NIC MAC the factory handshake still completes (and returns temporary credentials) but the telnet daemon never spawns / login is denied.
+
+**ZUDZ handles this automatically since v0.5.1**: for each operation it brings up a temporary `macvlan` interface carrying `00:07:29:55:35:57`, routes the device traffic through it **for the whole session** (factory unlock *and* telnet), then removes it — your real NIC is never touched. This needs either **docker** (used without root) or **root**. If neither is available, set the NIC MAC manually as below, or run with `ZUDZ_AUTO_MAC=1` to have ZUDZ change it temporarily and restore it on exit.
+
+## Automatic (ZUDZ ≥ 0.5.1) — recommended
+
+```bash
+zudz diag-route status   # is the diagnostic route active?
+zudz diag-route setup    # create it (docker or root) and leave it — for manual telnet
+zudz diag-route remove   # remove it
+```
+
+ZUDZ's own commands (`unlock`, `extract-all`, `gpon-read/write`, `region-*`) create the route **automatically for each operation and keep it alive for the whole telnet session**, removing it afterwards. The web UI shows the status in the Decrypt tab via the **"Check diagnostic MAC"** button.
+
+## Manual fallback — change the NIC MAC yourself
 
 The change is temporary with method 1 (reverts on reboot) and persistent with methods 2–4.
 

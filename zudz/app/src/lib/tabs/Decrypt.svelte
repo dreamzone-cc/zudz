@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tr, fmtBytes, westernDigits } from '$lib/i18n';
-  import { api } from '$lib/api';
+  import { api, type DiagRoute } from '$lib/api';
   import Progress from '$lib/Progress.svelte';
   import { parseZteXml, summarize, summaryToText, type ZteTable, type Summary } from '$lib/zte-xml';
 
@@ -12,6 +12,7 @@
   let connPort = 0;
   let connLatency = 0;
   let connDetail = '';
+  let diag: DiagRoute | null = null;
 
   // ─── مكان التخزين ───────────────────────────────────────
   let inputMode: 'browser' | 'path' = 'browser';
@@ -100,6 +101,15 @@
     } catch (e: any) {
       stopAnim(); progActive = false;
       connState = 'failed'; connDetail = String(e?.message || e);
+    }
+  }
+
+  // ─── المسار التشخيصي (MAC 00:07:29:55:35:57 — شرط فتح telnet) ──
+  async function doDiagStatus() {
+    try {
+      diag = await api.diagRoute({ action: 'status', host: chost });
+    } catch (e: any) {
+      diag = { ok: false, status: 'no-route', note: String(e?.message || e) };
     }
   }
 
@@ -234,6 +244,21 @@
         <span class="dim">({$tr('conn.port')} {westernDigits(String(connPort))} · {$tr('conn.latency')} {westernDigits(String(connLatency))}ms)</span>
       {:else}
         <span class="cdot err"></span>{$tr('conn.failed')} — <span class="dim">{westernDigits(connDetail)}</span>
+      {/if}
+    </div>
+    <div class="diag-row">
+      <button class="sec" on:click={doDiagStatus} disabled={busy !== ''}>{$tr('diag.check')}</button>
+      {#if diag}
+        <span class="diag-chip s-{diag.status}">
+          {#if diag.status === 'active'}
+            ✅ {$tr('diag.active')}{#if diag.mode} — <span class="mono">{diag.mode}</span>{/if}
+          {:else if diag.status === 'needs-setup'}
+            ⚠️ {$tr('diag.needsSetup')} — <span class="mono">{diag.current_mac}</span> → <span class="mono">{diag.required_mac}</span>
+            <span class="dim">{$tr('diag.autoNote')}</span>
+          {:else}
+            ❌ {diag.note ?? diag.status}
+          {/if}
+        </span>
       {/if}
     </div>
   </div>
@@ -508,6 +533,11 @@
   .conn-status .dim { color: inherit; opacity: 0.75; }
   .cdot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }
   .cdot.spin { animation: spin 1s linear infinite; border-radius: 2px; }
+  .diag-row { margin-block-start: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .diag-chip { padding: 6px 10px; border-radius: 8px; font-size: 0.9em; overflow-wrap: anywhere; }
+  .diag-chip.s-active { background: rgba(58, 210, 154, 0.1); border: 1px solid var(--ok); color: var(--ok); }
+  .diag-chip.s-needs-setup { background: rgba(255, 190, 60, 0.1); border: 1px solid var(--warn, #ffbe3c); color: var(--warn, #ffbe3c); }
+  .diag-chip.s-no-route, .diag-chip.s-removed { background: rgba(255, 107, 122, 0.1); border: 1px solid var(--err); color: var(--err); }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .res-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }

@@ -188,7 +188,23 @@ pub fn check_diagnostic_mac(host: &str) -> Result<(), FactoryError> {
 /// 3. جولتان كاملتان بفاصل 1.5 ثانية.
 /// 4. بعد النجاح: فحص فتح المنفذ 23 — إن بقي مسدوداً يُعاد التفعيل مرة
 ///    إضافية (يستيقظ telnetd أحياناً في الجولة التالية).
+/// فتح مع فحص المنفذ — للاستخدام التشخيصي (CLI فقط). عمليات السحب الفعلية
+/// تستخدم `unlock_telnet_quiet`: فحص المنفذ يفتح اتصالاً TCP على 23 يستهلك
+/// حصة telnetd المحدودة (Max_Con_Num) وقد يزاحم الاتصال الحقيقي التالي،
+/// وإعادة التفعيل الثانية تستهلك جولة mode=2 دون داعٍ.
 pub fn unlock_telnet(host: &str, user: &str, password: &str) -> Result<UnlockResult, FactoryError> {
+    let mut r = unlock_telnet_quiet(host, user, password)?;
+    r.port_open = port_open(host, 1500);
+    Ok(r)
+}
+
+/// الفتح القياسي الصامت: بروتوكول نظيف واحد ثم الاتصال الفعلي مباشرة —
+/// لا أي لمس للمنفذ 23 قبل الاتصال الحقيقي.
+pub fn unlock_telnet_quiet(
+    host: &str,
+    user: &str,
+    password: &str,
+) -> Result<UnlockResult, FactoryError> {
     let combos: &[(&[u8; 96], ProtocolVersion)] = &[
         (&crate::KEY_POOL, ProtocolVersion::V50),
         (&crate::KEY_POOL, ProtocolVersion::V61),
@@ -202,18 +218,7 @@ pub fn unlock_telnet(host: &str, user: &str, password: &str) -> Result<UnlockRes
         }
         for (pool, ver) in combos {
             match unlock_once(host, user, password, &DIAGNOSTIC_MAC, pool, *ver) {
-                Ok(mut r) => {
-                    // فحص فتح المنفذ — إن تأخر telnetd نعيد التفعيل مرة واحدة
-                    if !port_open(host, 2500) {
-                        if let Ok(r2) =
-                            unlock_once(host, user, password, &DIAGNOSTIC_MAC, pool, *ver)
-                        {
-                            r = r2;
-                        }
-                    }
-                    r.port_open = port_open(host, 1500);
-                    return Ok(r);
-                }
+                Ok(r) => return Ok(r),
                 // خطأ شبكة (الجهاز غير قابل للوصول) — تدوير المجمّعات بلا جدوى
                 Err(e @ FactoryError::Http(_)) => return Err(e),
                 Err(e) => last_err = Some(e),

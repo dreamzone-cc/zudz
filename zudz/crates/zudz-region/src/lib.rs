@@ -82,19 +82,8 @@ pub fn find_region(code: u32) -> Option<&'static Region> {
     REGIONS.iter().find(|r| r.code == code)
 }
 
-/// أوامر فتح telnet الدائم (من التعليمات المجربة على F6600P)
-pub const PERM_TELNET_COMMANDS: &[&str] = &[
-    "sendcmd 1 DB set TelnetCfg 0 Lan_Enable 1",
-    "sendcmd 1 DB set TelnetCfg 0 TS_UName admin",
-    "sendcmd 1 DB set TelnetCfg 0 TS_UPwd admin",
-    "sendcmd 1 DB set TelnetCfg 0 TSLan_UPwd admin",
-    "sendcmd 1 DB set TelnetCfg 0 Max_Con_Num 99",
-    "sendcmd 1 DB set TelnetCfg 0 ExitTime 999999",
-    "sendcmd 1 DB set TelnetCfg 0 InitSecLvl 3",
-    "sendcmd 1 DB set TelnetCfg 0 CloseServerTime 9999999",
-    "sendcmd 1 DB set TelnetCfg 0 Lan_EnableAfterOlt 1",
-    "sendcmd 1 DB save",
-];
+/// أوامر فتح telnet الدائم (من التعليمات المجربة على F6600P) — المصدر في zudz-telnet.
+pub use zudz_telnet::PERM_TELNET_COMMANDS;
 
 // ─── بوابة الأمان ──────────────────────────────────────────────────────
 
@@ -238,23 +227,17 @@ pub fn change_region(
     let ack = validate_ack(out_dir, &token, &opts.host)?;
     let _ = ack.report_path; // التقرير محفوظ في out_dir
 
-    let r = zudz_factory::unlock_telnet(&opts.host, &opts.web_user, &opts.web_password)
+    // افتح الجلسة عبر المسار الموحّد: MAC تشخيصي + إعادة استخدام جلسة عاملة.
+    let mut opts2 = opts.clone();
+    opts2.with_perm_telnet = permanent_telnet;
+    let mut dt = zudz_extract::open_device_telnet(&opts2)
         .map_err(|e| RegionError::Extract(format!("unlock: {e}")))?;
-    let mut tn = zudz_telnet::ZteTelnet::connect_retry(&opts.host, 23, 4, 6, 1200)
-        .map_err(|e| RegionError::Extract(e.to_string()))?;
-    tn.login_fallback(&zudz_extract::telnet_attempts(&r))
-        .map_err(|e| RegionError::Extract(e.to_string()))?;
-    let _ = tn.run_capture("", 2);
+    let _ = dt.telnet.run_capture("", 2);
 
-    let mut perm = false;
-    if permanent_telnet {
-        for cmd in PERM_TELNET_COMMANDS {
-            let _ = tn.run_capture(cmd, 2);
-        }
-        perm = true;
-    }
-
-    let out = tn.run_capture(&format!("upgradetest sdefconf {code}"), 8);
+    let out = dt.telnet.run_capture(&format!("upgradetest sdefconf {code}"), 8);
+    // تثبيت telnet الدائم بعد التنفيذ (يبقى بعد إعادة تشغيل الجهاز)
+    zudz_extract::finalize_telnet(&mut dt, permanent_telnet);
+    let perm = permanent_telnet;
 
     // استهلك ملف الـack (لمرة واحدة)
     let _ = std::fs::remove_file(out_dir.join("region_ack.json"));
@@ -282,16 +265,13 @@ pub struct GponWriteResult {
 
 /// يقرأ هوية GPON عبر telnet (setmac 2 + show2)
 pub fn gpon_read(opts: &ExtractOptions) -> Result<zudz_gpon_lite::TagMap, RegionError> {
-    let r = zudz_factory::unlock_telnet(&opts.host, &opts.web_user, &opts.web_password)
-        .map_err(|e| RegionError::Extract(format!("unlock: {e}")))?;
-    let mut tn = zudz_telnet::ZteTelnet::connect_retry(&opts.host, 23, 4, 6, 1200)
+    let mut dt = zudz_extract::open_device_telnet(opts)
         .map_err(|e| RegionError::Extract(e.to_string()))?;
-    tn.login_fallback(&zudz_extract::telnet_attempts(&r))
-        .map_err(|e| RegionError::Extract(e.to_string()))?;
-    let _ = tn.run_capture("", 2);
-    let _ = tn.run_capture("setmac show2 > /tmp/zudz_g.txt 2>&1", 3);
-    let txt = tn.run_capture("cat /tmp/zudz_g.txt", 4);
-    let _ = tn.run_capture("rm -f /tmp/zudz_g.txt", 2);
+    let _ = dt.telnet.run_capture("", 2);
+    let _ = dt.telnet.run_capture("setmac show2 > /tmp/zudz_g.txt 2>&1", 3);
+    let txt = dt.telnet.run_capture("cat /tmp/zudz_g.txt", 4);
+    let _ = dt.telnet.run_capture("rm -f /tmp/zudz_g.txt", 2);
+    zudz_extract::finalize_telnet(&mut dt, opts.with_perm_telnet);
     Ok(zudz_gpon_lite::parse(&txt))
 }
 
@@ -315,13 +295,9 @@ pub fn gpon_write(
     // السحب الاحتياطي التلقائي لهوية الجهاز الحالية — قبل فتح جلسة الكتابة
     let (backup, _tok) = auto_backup(opts, out_dir, "كتابة هوية GPON (setmac)")?;
 
-    let r = zudz_factory::unlock_telnet(&opts.host, &opts.web_user, &opts.web_password)
-        .map_err(|e| RegionError::Extract(format!("unlock: {e}")))?;
-    let mut tn = zudz_telnet::ZteTelnet::connect_retry(&opts.host, 23, 4, 6, 1200)
+    let mut dt = zudz_extract::open_device_telnet(opts)
         .map_err(|e| RegionError::Extract(e.to_string()))?;
-    tn.login_fallback(&zudz_extract::telnet_attempts(&r))
-        .map_err(|e| RegionError::Extract(e.to_string()))?;
-    let _ = tn.run_capture("", 2);
+    let _ = dt.telnet.run_capture("", 2);
 
     let mut cmds = vec![
         format!("setmac 1 2176 {vid}"),
@@ -336,9 +312,10 @@ pub fn gpon_write(
     let mut raw = String::new();
     for c in &cmds {
         raw.push_str(&format!("$ {c}\n"));
-        raw.push_str(&tn.run_capture(c, 3));
+        raw.push_str(&dt.telnet.run_capture(c, 3));
         raw.push('\n');
     }
+    zudz_extract::finalize_telnet(&mut dt, opts.with_perm_telnet);
     Ok(GponWriteResult { commands_run: cmds, raw_output: raw, backup: Some(backup) })
 }
 
@@ -423,6 +400,7 @@ mod tests {
             web_user: "u".into(),
             web_password: "p".into(),
             with_web: false,
+            with_perm_telnet: false,
         };
         let err = gpon_write(&opts, "ZTEG", "AABBCCDD", "", dir.path()).unwrap_err();
         assert!(

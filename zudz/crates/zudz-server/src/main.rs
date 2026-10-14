@@ -66,18 +66,14 @@ fn mac_auto_setup(state: &Arc<State>) {
         }
     };
 
-    // افتراضياً: لا تغيير فعلي للـ MAC — الفحوص الميدانية على F6600P
-    // (V9.0.10P25N1) أثبتت أن الحمولة وحدها تكفي (تحمل العنوان التشخيصي)
-    // والجهاز لا يطابق MAC مصدر الطلب. التفعيل الاختياري لبقية البرمجيات:
-    // ZUDZ_AUTO_MAC=1
+    // الوضع الصحيح (تحقق ميداني 2026-10-12 على F6600P V9.0.10P25N1):
+    // الجهاز **يشترط** أن يأتي طلب الفتح من MAC التشخيصي 00:07:29:55:35:57،
+    // وإلا يكتمل البروتوكول ولا يُنشأ خادم telnet (المنفذ 23 يبقى مغلقاً).
+    // يُنشأ المسار التشخيصي تلقائياً عند كل عملية (macvlan عبر docker، أو ip
+    // إن كان root). ZUDZ_AUTO_MAC=1 يفعّل تغيير MAC الكرت الفعلي بدلاً من ذلك.
     let enabled = std::env::var("ZUDZ_AUTO_MAC").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
     if !enabled {
-        let note = if let Ok(Some((iface, mac))) = zudz_factory::nic_mac_towards(&host) {
-            format!("الحمولة تحمل MAC التشخيصي (يكفي على هذه العائلة) — كرت {iface} بـ {} كما هو؛ فعّل ZUDZ_AUTO_MAC=1 إن ألزمت برمجيتك التغيير الفعلي", zudz_factory::mac_str(&mac))
-        } else {
-            "لا مسار نحو الجهاز — مسارات الويب وفك التشفير تعمل بلا تغيير".into()
-        };
-        set_status(serde_json::json!({ "status": "skipped", "mode": "payload-only", "note": note }));
+        set_status(diag_status_json(&host));
         return;
     }
 
@@ -111,12 +107,35 @@ fn mac_auto_setup(state: &Arc<State>) {
     }
 }
 
+/// حالة المسار التشخيصي (للواجهة والخادم): active | needs-setup | no-route
+fn diag_status_json(host: &str) -> serde_json::Value {
+    if zudz_factory::diagmac::nic_is_diagnostic(host) {
+        serde_json::json!({ "status": "active", "mode": "native-nic",
+            "required_mac": zudz_factory::DIAGNOSTIC_MAC_STR,
+            "note": "كرت الشبكة يحمل MAC التشخيصي أصلاً" })
+    } else if zudz_factory::diagmac::diag_route_active(host) {
+        serde_json::json!({ "status": "active", "mode": "route",
+            "required_mac": zudz_factory::DIAGNOSTIC_MAC_STR,
+            "note": "مسار MAC التشخيصي نشط" })
+    } else if let Ok(Some((iface, mac))) = zudz_factory::nic_mac_towards(host) {
+        serde_json::json!({
+            "status": "needs-setup", "mode": "route", "iface": iface,
+            "current_mac": zudz_factory::mac_str(&mac),
+            "required_mac": zudz_factory::DIAGNOSTIC_MAC_STR,
+            "note": "يُنشأ تلقائياً عند كل عملية (docker أو root)؛ أو zudz diag-route setup"
+        })
+    } else {
+        serde_json::json!({ "status": "no-route", "note": "لا مسار شبكي نحو الجهاز" })
+    }
+}
+
 fn opts_from(v: &serde_json::Value) -> ExtractOptions {
     ExtractOptions {
         host: v.get("host").and_then(|x| x.as_str()).unwrap_or("192.168.1.1").to_string(),
         web_user: v.get("user").and_then(|x| x.as_str()).unwrap_or("admin").to_string(),
         web_password: v.get("password").and_then(|x| x.as_str()).unwrap_or("admin").to_string(),
         with_web: v.get("with_web").and_then(|x| x.as_bool()).unwrap_or(true),
+        with_perm_telnet: v.get("perm_telnet").and_then(|x| x.as_bool()).unwrap_or(true),
     }
 }
 
@@ -352,6 +371,13 @@ fn handle_api(mut req: tiny_http::Request, method: &Method, url: &str, st: &mut 
                 let v = st.mac.clone();
                 ok_json(req, v);
             }
+            "/api/diag-route" => {
+                // GET = حالة فقط (بلا جسم) — الجهاز الافتراضي
+                let host = "192.168.1.1";
+                let mut s = diag_status_json(host);
+                s["ok"] = serde_json::json!(true);
+                ok_json(req, s);
+            }
             "/api/extract/status" => {
                 match &st.extract_job {
                     None => ok_json(req, serde_json::json!({ "running": false, "done": false, "idle": true })),
@@ -433,6 +459,28 @@ fn handle_api(mut req: tiny_http::Request, method: &Method, url: &str, st: &mut 
             });
             st.extract_job = Some(job);
             ok_json(req, serde_json::json!({ "ok": true, "out_dir": out }));
+        }
+        "/api/diag-route" => {
+            let host = v.get("host").and_then(|x| x.as_str()).unwrap_or("192.168.1.1");
+            let action = v.get("action").and_then(|x| x.as_str()).unwrap_or("status");
+            match action {
+                "setup" => match zudz_factory::diagmac::setup_diag_route(host) {
+                    Ok(mode) => ok_json(req, serde_json::json!({
+                        "ok": true, "status": "active", "mode": mode.to_string(),
+                        "required_mac": zudz_factory::DIAGNOSTIC_MAC_STR
+                    })),
+                    Err(e) => err_json(req, e),
+                },
+                "remove" => {
+                    zudz_factory::diagmac::remove_diag_route(host);
+                    ok_json(req, serde_json::json!({ "ok": true, "status": "removed" }))
+                }
+                _ => {
+                    let mut s = diag_status_json(host);
+                    s["ok"] = serde_json::json!(true);
+                    ok_json(req, s)
+                }
+            }
         }
         "/api/extract" => {
             let o = opts_from(&v);

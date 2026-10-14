@@ -37,7 +37,7 @@ export interface Meta {
 /// قيم احتياطية ثابتة (عندما لا يعمل الخادم) — مطابقة لـ zudz-meta
 export const FALLBACK_META: Meta = {
   name: 'ZUDZ',
-  version: '0.5.0',
+  version: '0.5.1',
   tagline: 'ZTE Unlock, Decrypt & Zone-changer',
   author: 'dreamzone-cc',
   homepage: 'https://github.com/dreamzone-cc',
@@ -82,6 +82,17 @@ export interface BackupInfo {
   dir: string;
   report_path: string;
   reason: string;
+}
+
+/// حالة المسار التشخيصي (MAC 00:07:29:55:35:57 — شرط فتح telnet)
+export interface DiagRoute {
+  ok: boolean;
+  status: 'active' | 'needs-setup' | 'no-route' | 'removed';
+  mode?: string;
+  iface?: string;
+  current_mac?: string;
+  required_mac?: string;
+  note?: string;
 }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -133,4 +144,6 @@ export const api = {
     call<DecryptResult>('/api/decrypt-content', p),
   devicePing: (p: { host: string; user: string; password: string }) =>
     call<DevicePing>('/api/device/ping', p),
+  diagRoute: (p: { action: 'setup' | 'remove' | 'status'; host?: string }) =>
+    call<DiagRoute>('/api/diag-route', p),
 };

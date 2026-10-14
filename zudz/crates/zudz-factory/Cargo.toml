@@ -9,6 +9,8 @@ description = "ZUDZ factory-mode: telnet unlock protocol (STEP 0-5)"
 aes = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 zudz-crypto = { path = "../zudz-crypto" }
